@@ -1,8 +1,8 @@
-# dsh-remote-development
+# @jackguo0310/dsh-remote
 
 [English](README.md) | 中文
 
-<img src="docs/img/preview_zh.png" alt="DeepSeek Harness Web GUI 中的 dsh-remote-development：远程工作区会话与右侧文档预览" width="100%">
+<img src="docs/img/preview_zh.png" alt="DeepSeek Harness Web GUI 中的 @jackguo0310/dsh-remote：远程工作区会话与右侧文档预览" width="100%">
 
 <p align="center">
   <img src="docs/img/settings_zh.png" alt="远程开发设置：已保存的机器、认证方式与标记颜色" width="45%">
@@ -46,20 +46,20 @@ dsh -V
 
 | 你的 dsh | 插件版本 | 安装命令 |
 | --- | --- | --- |
-| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.2.0` |
-| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.1.0` |
+| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.0` |
+| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 `lib/` 构建产物随 tag 入库，所以从 tag 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你选的那个 ref。
 
-换版本：用新的 ref 重新 add 即覆盖；彻底移除则 `dsh plugin remove --profile web dsh-remote-development`。
+换版本：用新的 ref 重新 add 即覆盖；彻底移除则 `dsh plugin remove --profile web @jackguo0310/dsh-remote`。
 
 开发模式则链接本地检出：
 
 ```sh
-cd dsh-remote-development
+cd dsh-remote
 pnpm install          # 自包含 workspace；store 位于 .pnpm-store/
 pnpm run build        # 产出 lib/index.js（宿主半）与 lib/client.js（浏览器半）
-dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
+dsh plugin add --profile web link:/absolute/path/to/dsh-remote
 ```
 
 `link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
@@ -83,7 +83,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 
 只需三步：
 
-1. **添加机器。** 在 Web GUI 的 **dsh-remote-development** 设置分区填入 host、port、用户名，选择密码 / 私钥 / SSH agent 认证（可选跳板机），点击测试连接。
+1. **添加机器。** 在 Web GUI 的 **@jackguo0310/dsh-remote** 设置分区填入 host、port、用户名，选择密码 / 私钥 / SSH agent 认证（可选跳板机），点击测试连接。
 2. **选择远程目录。** 在工作区目录流（hero 的「选择目录」对话框或侧边栏工作区选择器）打开**远程**页签，浏览机器目录，把某个远程目录设为会话工作区。
 3. **照常工作。** 到此为止。文件工具、shell、bash、搜索仍以同样的调用方式执行，只是落在远程机器上；模型的工作目录就是远程路径，不需要任何额外说明，也不会多出任何新工具。所选目录之外的路径保持本地行为，既有会话不受影响。
 
@@ -135,7 +135,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 
 - **Windows 远程机延期支持。** 远程机器必须运行 POSIX shell；`uname` 探测会以明确错误拒绝 Windows 目标。适配预留到后续阶段。
 - **Windows 本机支持远程 shell 路由。** Windows 宿主挂载基于 pwsh 的路由执行器：本地工作目录保持沙箱 pwsh 执行器，锚点工作目录跨到远程主机的 bash。模型在远程会话看到 `bash` 工具，本地会话看到 `pwsh` 工具。
-- **不支持持久终端会话。** 终端工具会返回明确的"not supported by dsh-remote-development"错误，而不是让 agent 自行尝试；远程命令请使用 bash 工具。持久 shell 工具仍仅限本地：指向远程工作区的持久工具会以同样错误拒绝。
+- **不支持持久终端会话。** 终端工具会返回明确的"not supported by @jackguo0310/dsh-remote"错误，而不是让 agent 自行尝试；远程命令请使用 bash 工具。持久 shell 工具仍仅限本地：指向远程工作区的持久工具会以同样错误拒绝。
 - **远程会话不支持 `@` 文件引用。** 远程会话中输入 `@` 会给出单条明确的"暂不支持"候选，而不是静默失败；引用源接口已预留到后续阶段。
 - **没有镜像或同步层。** 锚点目录只保存元数据，不保存文件副本；每次读写都经 SSH，受 `maxFileBytes` 限制。
 - **文件树标记依赖 in-box 的 `data-files-*` 钩子。** 着色目标是文件树的数据属性，它们不是声明过的公开契约；dsh 若重命名这些属性，着色会静默消失（纯展示层，不影响其他功能）。工作区行的标记还依赖工作区标题匹配：重命名工作区、或 dsh 更改侧边栏 `aria-label` 文案，会让行标记失效（文件树标记不受影响）。

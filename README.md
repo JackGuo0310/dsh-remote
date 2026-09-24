@@ -1,8 +1,8 @@
-# dsh-remote-development
+# @jackguo0310/dsh-remote
 
 English | [中文](README.zh.md)
 
-<img src="docs/img/preview_en.png" alt="dsh-remote-development in the DeepSeek Harness web GUI: a remote workspace session with the document preview sidebar" width="100%">
+<img src="docs/img/preview_en.png" alt="@jackguo0310/dsh-remote in the DeepSeek Harness web GUI: a remote workspace session with the document preview sidebar" width="100%">
 
 <p align="center">
   <img src="docs/img/settings_en.png" alt="The remote development settings: saved machines, authentication, and marker color" width="45%">
@@ -46,20 +46,20 @@ Then pick the plugin version from [Compatibility](#compatibility). **Always inst
 
 | Your dsh | Plugin version | Install command |
 | --- | --- | --- |
-| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.2.0` |
-| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.1.0` |
+| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.0` |
+| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 The built `lib/` is committed with each tag, so a tag install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records the ref you chose.
 
-To change versions, re-add with the new ref; to remove the plugin, `dsh plugin remove --profile web dsh-remote-development`.
+To change versions, re-add with the new ref; to remove the plugin, `dsh plugin remove --profile web @jackguo0310/dsh-remote`.
 
 For development, link a local checkout instead:
 
 ```sh
-cd dsh-remote-development
+cd dsh-remote
 pnpm install          # self-contained workspace; store lives in .pnpm-store/
 pnpm run build        # emits lib/index.js (host) and lib/client.js (browser)
-dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
+dsh plugin add --profile web link:/absolute/path/to/dsh-remote
 ```
 
 A `link:` install points the profile at the checkout directory, so later `pnpm run build` runs apply on the next harness restart without re-adding.
@@ -83,7 +83,7 @@ When the host publishes the next alpha generation, the peer range needs updating
 
 Three steps and nothing else:
 
-1. **Add a machine.** In the Web GUI's **dsh-remote-development** settings section, enter host, port, and username, choose password / private key / SSH agent authentication (optional jump proxy), and click test.
+1. **Add a machine.** In the Web GUI's **@jackguo0310/dsh-remote** settings section, enter host, port, and username, choose password / private key / SSH agent authentication (optional jump proxy), and click test.
 2. **Pick a remote directory.** In the workspace directory flow (the hero "choose directory" dialog or the sidebar workspaces picker), open the **Remote** tab, browse the machine's directories, and set one as the session workspace.
 3. **Work as usual.** That is the whole setup. File tools, shell, bash, and search run through the same tool calls as before — only now they execute on the remote machine; the model's working directory is the remote path, so it needs no special instructions and gains no new tools. Anything outside the chosen directory keeps local behavior, so existing sessions are untouched.
 
@@ -135,7 +135,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 
 - **Windows remote hosts are deferred.** Remote machines must run a POSIX shell; `uname` detection rejects Windows targets with a clear error. Adaptation is reserved for a later phase.
 - **Windows local hosts route remote shell commands.** A Windows host mounts the pwsh-based routing executor: local workdirs keep the sandboxed pwsh executor, and anchor workdirs cross to the remote host's bash. The model sees the `bash` tool for remote sessions and the `pwsh` tool for local ones.
-- **Persistent terminal sessions are not supported.** The terminal tool reports an explicit "not supported by dsh-remote-development" error instead of letting the agent try; use the bash tool for remote commands. Persistent shell tools remain local-only: a persistent tool pointed at a remote workspace refuses with the same error.
+- **Persistent terminal sessions are not supported.** The terminal tool reports an explicit "not supported by @jackguo0310/dsh-remote" error instead of letting the agent try; use the bash tool for remote commands. Persistent shell tools remain local-only: a persistent tool pointed at a remote workspace refuses with the same error.
 - **`@` file references are not supported in remote sessions.** Typing `@` in a remote session yields a single explicit "not supported yet" candidate rather than a silent failure; the reference-source interface is reserved for a later phase.
 - **No mirror or sync layer.** Anchor directories hold metadata only, not file copies; every read and write crosses SSH, bounded by `maxFileBytes`.
 - **Tree marking depends on in-box `data-files-*` hooks.** The recoloring targets the file tree's data attributes, which are not a declared public contract; a dsh rename silently drops the coloring (purely presentational — nothing else breaks). Workspace-row markers additionally match by workspace title: renaming a workspace, or a dsh change to the sidebar's `aria-label` copy, drops the row marker while the file-tree marker keeps working.

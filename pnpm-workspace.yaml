@@ -2,6 +2,7 @@
 # so the plugin is managed independently of the dsh checkout it lives inside.
 packages:
   - .
+autoInstallPeers: false
 
 # Build scripts reviewed (same policy shape as the dsh checkout): esbuild
 # powers the tsdown bundle; node-pty + koffi are the native PTY/process

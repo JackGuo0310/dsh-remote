@@ -38,7 +38,7 @@ import { registerPrompt } from './prompt.ts'
 import { registerToolVisibility } from './tool-visibility.ts'
 import { registerRoutes } from './routes.ts'
 
-export const name = 'dsh-remote-development'
+export const name = '@jackguo0310/dsh-remote'
 
 /**
  * Service dependencies, declared at module level because this is a namespace

@@ -13,7 +13,7 @@
  */
 import { defineConfig } from 'tsdown'
 
-const PLUGIN_ID = 'dsh-remote-development'
+const PLUGIN_ID = '@jackguo0310/dsh-remote'
 
 /** Module-table entries the client bundle may require (platform baseline). */
 const CLIENT_EXTERNALS = [

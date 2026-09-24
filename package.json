@@ -1,5 +1,5 @@
 {
-  "name": "dsh-remote-development",
+  "name": "@jackguo0310/dsh-remote",
   "version": "0.2.0",
   "description": "Lightweight remote development for DeepSeek Harness: pick a remote workspace over SSH and let the agent work on it with the SAME local tools — file, shell, and search providers are routed to the remote host by the plugin. No extra model tools, no third-party UI plugin.",
   "license": "MIT",
@@ -12,7 +12,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/CJYLZS/dsh-remote-development.git"
+    "url": "https://github.com/jackguo0310/dsh-remote.git"
   },
   "engines": {
     "node": ">=22.19"
@@ -55,6 +55,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1 <0.2.0",
     "@deepseek-ai/dsh-agent": ">=0.1.7-alpha.1 <0.2.0",
     "@deepseek-ai/dsh-bash-sandbox": ">=0.1.7-alpha.1 <0.2.0",
     "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.7-alpha.1 <0.2.0",

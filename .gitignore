@@ -4,3 +4,4 @@ node_modules/
 .smoke-home/
 .smoke-boot.log
 .smoke-dump.txt
+otherRepo/

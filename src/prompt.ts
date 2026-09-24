@@ -25,7 +25,7 @@ import { remoteBasename } from './paths.ts'
  */
 export function registerPrompt(ctx: Context, world: RemoteWorld): void {
   ctx.systemPrompt.section({
-    name: 'dsh-remote-development',
+    name: '@jackguo0310/dsh-remote',
     order: 88,
     text: (promptContext) => {
       const agent = promptContext?.agent

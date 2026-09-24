@@ -30,7 +30,7 @@ test('patch mounts the bash tool on every host platform', () => {
 })
 
 test('patch inserts the plugin row', () => {
-  assert.match(patch, /- insert:\n\s+- id: dsh-remote-development\n\s+name: '?dsh-remote-development'?/)
+  assert.match(patch, /- insert:\n\s+- id: '@jackguo0310\/dsh-remote'\n\s+name: '?@jackguo0310\/dsh-remote'?/)
 })
 
 test('patch does not re-gate the pwsh tool', () => {

@@ -1,4 +1,4 @@
-# dsh-remote-development bundle patch: inserts this plugin into a profile's layer stack.
+# @jackguo0310/dsh-remote bundle patch: inserts this plugin into a profile's layer stack.
 #
 # The plugin is ONE row: its apply() mounts every routing provider (ctx.fs /
 # ctx.subprocess / ctx.shell), the per-agent tool-visibility restrictions, the
@@ -45,5 +45,5 @@
 - id: tool-bash
   disabled: false
 - insert:
-    - id: dsh-remote-development
-      name: 'dsh-remote-development'
+    - id: '@jackguo0310/dsh-remote'
+      name: '@jackguo0310/dsh-remote'

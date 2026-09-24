@@ -23,7 +23,7 @@ export function registerReferenceSource(
 ): void {
   const source: InputTriggerSource = {
     trigger: '@',
-    name: 'dsh-remote-development',
+    name: '@jackguo0310/dsh-remote',
     showGroupTitle: false,
     async candidates(session, req) {
       if (req.quoted === true) return []

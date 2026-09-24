@@ -50,7 +50,7 @@ export function apply(ctx: ClientContext): void {
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
-    id: 'dsh-remote-development',
+    id: '@jackguo0310/dsh-remote',
     order: 45,
     label: () => t('settings.title'),
     inject: () => ({
