@@ -2,8 +2,8 @@
 
 - 状态：ready
 - 记录人：codex
-- 更新时间（UTC+8）：2026-09-24 16:13:04
-- Git 基线：5cd87f350d2fc06f05db2f88e7fd1658b385001a
+- 更新时间（UTC+8）：2026-09-24 16:16:02
+- Git 基线：01af877379fabde76a6c1a76291b752734e33a25
 - 工作树：clean
 - 未提交修改归属：none
 
@@ -15,6 +15,7 @@
 
 - v0.2.0 已包含 DSH `0.1.7-rc.1` peer 兼容声明及 scoped 包名/插件 ID。
 - `fb3aff6` 已推送到 `origin/main`，标签 `v0.2.0` 已推送到 GitHub。
+- `01af877` 已将 `AGENTS.md` 纳入仓库，说明 `otherRepo/` 的用途、参考仓库清单和新电脑补齐命令。
 - `pnpm run typecheck`、`pnpm test`（98 项）和 `pnpm run build` 均通过。
 - 用户已成功安装插件；插件列表显示 `@jackguo0310/dsh-remote`。
 - 插件安装/卸载的在线热加载后，DSH rc.1 可能留下 `sessionController`、`shell`、`fs`、`subprocess` 等服务 pending，导致终端设置消失及 `session/prompt` gateway 错误；完整重启 DSH 后恢复。
@@ -43,5 +44,5 @@
 
 ## 基线规则
 
-- 本交接提交只修改 `.agentrelay/HANDOFF.md`，其父提交必须是 `fb3aff6983318be320a281c11ae66c893c1a4d2d`。
+- 本交接提交只修改 `.agentrelay/HANDOFF.md`，其父提交必须是 `01af877379fabde76a6c1a76291b752734e33a25`。
 - 本次提交 trailer 必须包含 `Agent: codex`。
