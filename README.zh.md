@@ -46,7 +46,7 @@ dsh -V
 
 | 你的 dsh | 插件版本 | 安装命令 |
 | --- | --- | --- |
-| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.1` |
+| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.2` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 `lib/` 构建产物随 tag 入库，所以从 tag 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你选的那个 ref。
