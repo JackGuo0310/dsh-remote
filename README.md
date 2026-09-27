@@ -46,7 +46,7 @@ Then pick the plugin version from [Compatibility](#compatibility). **Always inst
 
 | Your dsh | Plugin version | Install command |
 | --- | --- | --- |
-| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.0` |
+| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.1` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 The built `lib/` is committed with each tag, so a tag install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records the ref you chose.
@@ -71,8 +71,10 @@ Restart the harness after installing.
 
 dsh changed the shell seam in 0.1.7-alpha.1 with two breaking changes and no compatibility layer: execution converged on `resolve()` + `execute()` (`run()`/`start()` were deleted), and the local executors' Config became live accessors (`Volatile`, plus a new `pwshPath`). Plugin and host therefore pair by generation:
 
-- **v0.2.x → dsh ≥ 0.1.7-alpha.1**, declared as `peerDependencies: >=0.1.7-alpha.1 <0.2.0`.
+- **v0.2.x → dsh ≥ 0.1.7-rc.1**, declared as `peerDependencies: >=0.1.7-rc.1 <0.2.0` on `@deepseek-ai/dsh` and `>=0.1.7-alpha.1 <0.2.0` on each `dsh-*` package. v0.2.1 additionally targets the rc.2 host API.
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x** (the `run()`/`start()` seam).
+
+The host checks every `@deepseek-ai/dsh*` peer before loading a plugin and refuses an unsatisfied range, naming the offending packages. `@deepseek-ai/cordis` is not among the packages it checks.
 
 A mismatched pair is not caught automatically. Its symptoms: with an older plugin on a newer host, startup throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`); with a newer plugin on an older host, startup fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) and commands throw `ctx.shell.run is not a function`.
 
@@ -83,7 +85,7 @@ When the host publishes the next alpha generation, the peer range needs updating
 
 Three steps and nothing else:
 
-1. **Add a machine.** In the Web GUI's **@jackguo0310/dsh-remote** settings section, enter host, port, and username, choose password / private key / SSH agent authentication (optional jump proxy), and click test.
+1. **Add a machine.** In the Web GUI's **@jackguo0310/dsh-remote** settings section, enter host, port, and username, choose password / private key / SSH agent authentication (optional jump proxy), click **test connection**, then save. A saved machine can be retested from its own card.
 2. **Pick a remote directory.** In the workspace directory flow (the hero "choose directory" dialog or the sidebar workspaces picker), open the **Remote** tab, browse the machine's directories, and set one as the session workspace.
 3. **Work as usual.** That is the whole setup. File tools, shell, bash, and search run through the same tool calls as before — only now they execute on the remote machine; the model's working directory is the remote path, so it needs no special instructions and gains no new tools. Anything outside the chosen directory keeps local behavior, so existing sessions are untouched.
 
@@ -152,7 +154,9 @@ Machines are managed in the settings section; the plugin itself takes config def
 <a id="dev-note"></a>
 ## Dev Note
 
-The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.2.0`, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
+The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.2.0` on each `dsh-*` package, `>=0.1.7-rc.1 <0.2.0` on `@deepseek-ai/dsh`, all supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
+
+Every peer rc.2 names must be present in `devDependencies`, not only the ones this source imports. rc.2 packages declare `dsh-bash-local`, `dsh-util-values`, `dsh-scope`, and others as peers pinned to the same version; when one is missing, pnpm resolves a stale copy and TypeScript cannot see the base class, so the errors read as an API break (`SandboxBashExecutor.Config` reported as missing, `FsError` reported as lacking `name`/`message`) rather than a missing peer.
 
 Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm run test` (node:test via tsx; no SSH server needed — the pool accepts an injected client factory and the SFTP surface is faked).
 

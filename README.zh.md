@@ -46,7 +46,7 @@ dsh -V
 
 | 你的 dsh | 插件版本 | 安装命令 |
 | --- | --- | --- |
-| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.0` |
+| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.1` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 `lib/` 构建产物随 tag 入库，所以从 tag 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你选的那个 ref。
@@ -71,10 +71,12 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote
 
 dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保留兼容层：执行入口收敛为 `resolve()` + `execute()`（`run()`/`start()` 被删除），本地执行器的 Config 改为活配置访问器（`Volatile`，并新增 `pwshPath`）。因此插件与宿主按代对应：
 
-- **v0.2.x → dsh ≥ 0.1.7-alpha.1**，声明为 `peerDependencies: >=0.1.7-alpha.1 <0.2.0`。
+- **v0.2.x → dsh ≥ 0.1.7-rc.1**，`@deepseek-ai/dsh` 声明为 `peerDependencies: >=0.1.7-rc.1 <0.2.0`，各 `dsh-*` 包为 `>=0.1.7-alpha.1 <0.2.0`。v0.2.1 另对齐 rc.2 宿主 API。
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x**（`run()`/`start()` seam）。
 
-装错版本不会自动拦截，典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
+宿主在加载插件前会校验每个 `@deepseek-ai/dsh*` peer，范围不满足即拒绝，并列出不满足的包名。`@deepseek-ai/cordis` 不在宿主校验的包之列。
+
+版本不匹配的其他典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
 
 宿主发布新一代 alpha 时，peer 范围需要相应更新（semver 的 prerelease 规则不会自动放行新的 alpha）。
 
@@ -83,7 +85,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 
 只需三步：
 
-1. **添加机器。** 在 Web GUI 的 **@jackguo0310/dsh-remote** 设置分区填入 host、port、用户名，选择密码 / 私钥 / SSH agent 认证（可选跳板机），点击测试连接。
+1. **添加机器。** 在 Web GUI 的 **@jackguo0310/dsh-remote** 设置分区填入 host、port、用户名，选择密码 / 私钥 / SSH agent 认证（可选跳板机），先点**测试连接**再保存。已保存的机器可在它自己的卡片上重新测试。
 2. **选择远程目录。** 在工作区目录流（hero 的「选择目录」对话框或侧边栏工作区选择器）打开**远程**页签，浏览机器目录，把某个远程目录设为会话工作区。
 3. **照常工作。** 到此为止。文件工具、shell、bash、搜索仍以同样的调用方式执行，只是落在远程机器上；模型的工作目录就是远程路径，不需要任何额外说明，也不会多出任何新工具。所选目录之外的路径保持本地行为，既有会话不受影响。
 
@@ -152,7 +154,9 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 <a id="开发说明"></a>
 ## 开发说明
 
-插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（`>=0.1.7-alpha.1 <0.2.0`，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
+插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（各 `dsh-*` 包为 `>=0.1.7-alpha.1 <0.2.0`，`@deepseek-ai/dsh` 为 `>=0.1.7-rc.1 <0.2.0`，均由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
+
+rc.2 各包声明的 peer 必须全部出现在 `devDependencies` 里，而不只是本源码直接 import 的那些。rc.2 把 `dsh-bash-local`、`dsh-util-values`、`dsh-scope` 等声明为钉同版本的 peer，漏掉时 pnpm 会解析到旧副本，TypeScript 看不到基类，报错便表现为 API 破坏（`SandboxBashExecutor.Config` 报不存在、`FsError` 报缺 `name`/`message`）而非缺 peer。
 
 命令：`pnpm run build`（tsdown，双半）、`pnpm run typecheck`、`pnpm run test`（node:test 经 tsx；无需 SSH 服务器——连接池接受注入的 client 工厂，SFTP 表面使用假件）。
 
