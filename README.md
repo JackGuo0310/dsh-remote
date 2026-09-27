@@ -46,7 +46,7 @@ Then pick the plugin version from [Compatibility](#compatibility). **Always inst
 
 | Your dsh | Plugin version | Install command |
 | --- | --- | --- |
-| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.2` |
+| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.3` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 The built `lib/` is committed with each tag, so a tag install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records the ref you chose.
