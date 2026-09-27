@@ -1,48 +1,54 @@
 # 当前交接
 
 - 状态：ready
-- 记录人：codex
-- 更新时间（UTC+8）：2026-09-24 16:16:02
-- Git 基线：01af877379fabde76a6c1a76291b752734e33a25
+- 记录人：dsh
+- 更新时间（UTC+8）：2026-09-27 14:08:47
+- Git 基线：5d8fc8374e472bdc6af15d57cfe8bda061edc1ca
 - 工作树：clean
 - 未提交修改归属：none
 
 ## 目标
 
-完成 `@jackguo0310/dsh-remote` v0.2.0 的交付交接：保持仓库干净，确认发布提交和标签已推送，并记录当前宿主热加载问题及下一步。
+把插件迁移到 DSH `0.1.7-rc.2`，并完成设置页「添加机器 + 测试连接」这条链路；等用户在宿主上安装后，继续远程工作区端到端验收。
 
 ## 已确认
 
-- v0.2.0 已包含 DSH `0.1.7-rc.1` peer 兼容声明及 scoped 包名/插件 ID。
-- `fb3aff6` 已推送到 `origin/main`，标签 `v0.2.0` 已推送到 GitHub。
-- `01af877` 已将 `AGENTS.md` 纳入仓库，说明 `otherRepo/` 的用途、参考仓库清单和新电脑补齐命令。
-- `pnpm run typecheck`、`pnpm test`（98 项）和 `pnpm run build` 均通过。
-- 用户已成功安装插件；插件列表显示 `@jackguo0310/dsh-remote`。
-- 插件安装/卸载的在线热加载后，DSH rc.1 可能留下 `sessionController`、`shell`、`fs`、`subprocess` 等服务 pending，导致终端设置消失及 `session/prompt` gateway 错误；完整重启 DSH 后恢复。
-- 插件安装/卸载由用户操作，Agent 不执行 `dsh plugin add/remove`。
+- 本机宿主为 DSH `0.1.7-rc.2`（`dsh --version`），Node 24.21，pnpm 12.4.2。
+- `otherRepo/` 五个参考仓库已就位；DSH 源码检出标签 `dsh-v0.1.7-rc.2`（`477b4f42`），目录名已改为 `deepseek-harness-0.1.7-rc.2`，`AGENTS.md` 同步（真实标签名带 `dsh-v` 前缀，之前的 `0.1.7-rc.1` 写法是错的）。
+- 原 devDependencies 锁在 `0.1.7-alpha.2`，且缺少 rc.2 声明的 peer（如 `dsh-bash-local`），导致 typecheck 对着旧宿主 API 报错。现已全部锁到 `0.1.7-rc.2`，补齐 peer，cordis 提到 `4.0.4`。
+- 修复 `5d8fc83` 已推送 `origin/main`：
+  - 连接池固定了凭据却从不淘汰，改完密码后下一次「测试连接」仍用旧密码认证；现按连接签名变化淘汰池，仅改名/改颜色不动活连接。
+  - 草稿探测复用共享池表，反复改写同一台机器会累积连接、还会打扰已保存机器；现草稿探测独占一个池，探测结束即关闭。探测时留空的密码会继承已存值。
+  - `testConnection` 遇到 `ok:false` 会抛错，而那正是「连接被拒」的返回方式，导致页面错误分支是死代码、所有失败都像网络故障；现改为带上宿主原始原因返回。
+  - 跳板机端口与用户名没有下发、编辑表单又重置成 22/空，保存任一机器都会清空其跳板机；服务端还读 `proxyUsername` 而表单写 `proxyUser`。三处现已一致。
+  - 编辑机器地址会新增一条记录（id 就是 host/port/user 三元组，改地址后 body 不再匹配它）；现让 id 透传、按 id 定位更新，并让 id 跟随新地址，保证该机器仍能被自己的 anchor 解析。
+  - 表单补上「保存前先测」，且每台机器各自保留上次结果，不再共用页面顶部一条提示。
+- 新增 `test/settings-flow.test.ts`：用脚本化的 SSH 传输驱动真实 HTTP 路由，覆盖添加、测试、草稿、错误密码、拒绝连接、改密码、跳板机、编辑地址等 10 项。每一处修复都验证过「改回旧代码测试会红」。
+- `pnpm run typecheck`、`pnpm test`（116 项）、`pnpm run build` 均通过。
 
 ## 未知 / 风险
 
-- 尚未确认该热加载故障是否完全属于 DSH rc.1 宿主生命周期；插件替换核心 provider 会触发该路径。
-- 尚未在完整重启后的真实 SSH 远程工作区中完成文件、shell、搜索端到端验收。
+- 本机没有 SSH 服务端、没有 WSL 发行版、没有 Docker，所以「添加机器 + 测试连接」只做到脚本化传输下的端到端，**尚未对真实 SSH 服务器验证过**。用户安装后需用真实主机确认。
+- 机器移动地址后，此前创建的 anchor 会按设计成为孤儿（anchor 记录的是 host/port/user），设置页会提示而不会改路由；此行为已有测试固定，但未在真实远程工作区中验证过提示文案。
+- rc.1 交接里记录的热加载故障（安装/卸载插件后 DSH 残留 pending 服务）尚未在 rc.2 上复现或排除。
 - 保留旧内部路由/持久化命名以兼容既有数据；不要未经验证地改动这些兼容路径。
 
 ## 下一步
 
-- 让用户完整重启 DSH 后，验证终端设置、消息发送和插件设置是否恢复。
-- 在重启后的实例中配置一台 POSIX SSH 主机，验收连接、远程目录选择、文件读写、bash 与搜索。
-- 若重启后正常，再单独研究如何让插件安装/卸载明确要求重启，或为 DSH rc.1 热加载路径补宿主侧修复；不要把当前 pending 状态当作远程路由功能故障。
+- 用户安装插件并**完整重启 DSH**，在设置页添加一台真实 POSIX SSH 主机：填地址 → 先「测试连接」→ 保存 → 再测试一次已保存项。
+- 确认失败时页面显示的是宿主给出的具体原因（如 `All configured authentication methods failed`、host key 变更），而不是笼统报错。
+- 上述通过后，再做远程工作区端到端验收：选远程目录、文件读写、bash、搜索。
+- 若安装/卸载插件后再次出现 rc.1 记录的 pending 服务问题，单独研究宿主热加载路径，不要当成远程路由功能故障。
 
 ## 验证
 
-- `pnpm install --frozen-lockfile`：通过。
+- `pnpm install`：通过（22 个 DSH 包均为 `0.1.7-rc.2`，另补 14 个 rc.2 peer）。
 - `pnpm run typecheck`：通过。
-- `pnpm test`：通过，98 项。
+- `pnpm test`：通过，116 项。
 - `pnpm run build`：通过。
-- `git push origin main`：通过。
-- `git push origin v0.2.0`：通过。
+- `git push origin main`：通过（`0269c76..5d8fc83`）。
 
 ## 基线规则
 
-- 本交接提交只修改 `.agentrelay/HANDOFF.md`，其父提交必须是 `01af877379fabde76a6c1a76291b752734e33a25`。
-- 本次提交 trailer 必须包含 `Agent: codex`。
+- 本交接提交只修改 `.agentrelay/HANDOFF.md`，其父提交必须是 `5d8fc8374e472bdc6af15d57cfe8bda061edc1ca`。
+- 本次提交 trailer 必须包含 `Agent: dsh`。
