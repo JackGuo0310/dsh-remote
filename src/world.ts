@@ -12,6 +12,7 @@ import path from 'node:path'
 import { HostKeyGuard } from './hostkey.ts'
 import type { KnownHostEntry } from './hostkey.ts'
 import { SshPool, UnsupportedRemoteError } from './pool.ts'
+import type { SFTPWrapper } from './pool.ts'
 import type { ClientFactory, PoolTarget, PoolTunables } from './pool.ts'
 import { ANCHOR_META_FILE, createAnchorDir, matchRemotePath, scanAnchors } from './anchors.ts'
 import type { AnchorInfo, AnchorMeta } from './anchors.ts'
@@ -381,6 +382,28 @@ export class RemoteWorld {
       keyboardInteractive: m.keyboardInteractive,
       ...(m.proxy ? { proxy: m.proxy } : {}),
       hostKeyMode: m.hostKeyMode || this.config.hostKeyMode,
+    }
+  }
+
+  /**
+   * The SFTP channel for one machine, behind the same audit and Windows-remote
+   * refusal as {@link execOn}. Directory browsing and creation go through this
+   * rather than a shell pipeline: SFTP carries each entry as its own frame
+   * with its own type, so a file name holding a newline, a quote, or a tab
+   * survives, and a user-supplied name is never parsed by a remote shell.
+   * @param ref - machine reference.
+   * @param operation - audit label describing the SFTP call.
+   * @returns the machine's SFTP session.
+   */
+  async sftpOn(ref: MachineRef, operation: string): Promise<SFTPWrapper> {
+    const pool = this.poolFor(ref)
+    try {
+      const sftp = await pool.sftp()
+      this.audit(ref, `sftp ${operation}`, null)
+      return sftp
+    } catch (err) {
+      this.audit(ref, `sftp ${operation}`, null)
+      throw err
     }
   }
 

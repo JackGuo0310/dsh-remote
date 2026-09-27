@@ -11,6 +11,7 @@ import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { RemoteWorld } from './world.ts'
 import type { SshPool } from './pool.ts'
 import type { MachineRef } from './world.ts'
+import { ensureRemoteDirs, listRemoteDir } from './remote-io.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
 
@@ -330,19 +331,18 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
             ? (await world.execOn(ref, 'echo $HOME', { timeoutMs: 8000 })).stdout.trim()
             : ''
           const dir = expanded ? normalizeRemotePath(path.replace(/^~/, expanded)) : path
-          const result = await world.execOn(
-            ref,
-            `ls -1Ap ${JSON.stringify(dir)} 2>/dev/null | head -500`,
-            { timeoutMs: world.config.commandTimeoutMs },
-          )
-          if (result.code !== 0) {
-            return sendJson(res, 200, { ok: false, error: `cannot list ${dir}: ${result.stderr.trim() || `exit ${result.code}`}` })
-          }
-          const entries = result.stdout.split('\n').filter(Boolean).map((line) => {
-            const isDir = line.endsWith('/')
-            const name = isDir ? line.slice(0, -1) : line
-            return { name, dir: isDir, path: dir === '/' ? `/${name}` : `${dir}/${name}` }
-          })
+          // Listed over SFTP, not by parsing `ls` output. Every name that can
+          // legally exist on a POSIX filesystem survives intact: a name holding
+          // a newline is not split into two rows, and one holding a tab or a
+          // quote needs no unescaping, because the frame arrives whole.
+          const sftp = await world.sftpOn(ref, `readdir ${dir}`)
+          const rows = await listRemoteDir(sftp, dir, undefined, world.config.commandTimeoutMs)
+          const entries = rows
+            // The browse dialog navigates directories, so a non-directory has
+            // nothing to open; a symlink is resolved by SFTP and reported as
+            // its target, which is what the user would see in a shell.
+            .filter((r) => r.type === 'directory')
+            .map((r) => ({ name: r.name, dir: true, path: dir === '/' ? `/${r.name}` : `${dir}/${r.name}` }))
           return sendJson(res, 200, { ok: true, path: dir, entries })
         } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })
@@ -363,8 +363,15 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         if (!name || name.includes('/')) return sendJson(res, 400, { ok: false, error: 'a single folder name is required' })
         const target = parent === '/' ? `/${name}` : `${parent}/${name}`
         try {
-          const result = await world.execOn(ref, `mkdir ${JSON.stringify(target)}`, { timeoutMs: world.config.commandTimeoutMs })
-          if (result.code !== 0) return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `exit ${result.code}` })
+          // Created over SFTP, not by running `mkdir <name>` in the remote login
+          // shell. A name the user typed is data, never a command line: `$`,
+          // backticks, and quotes in it reach the filesystem as themselves
+          // instead of being evaluated remotely.
+          const sftp = await world.sftpOn(ref, `mkdir ${target}`)
+          // ensureRemoteDirs creates the whole chain and tolerates a server
+          // that reports an existing directory as a mkdir failure, so the
+          // picker creating a folder twice reports the folder, not an error.
+          await ensureRemoteDirs(sftp, target, undefined, world.config.commandTimeoutMs)
           return sendJson(res, 200, { ok: true, path: target })
         } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })

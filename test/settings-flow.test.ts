@@ -19,7 +19,7 @@ import { RemoteWorld } from '../src/world.ts'
 import { registerRoutes } from '../src/routes.ts'
 import { makeKeyBlob } from '../src/hostkey.ts'
 import type { Config } from '../src/config.ts'
-import type { ClientChannel, SshClientLike } from '../src/pool.ts'
+import type { ClientChannel, SFTPWrapper, SshClientLike } from '../src/pool.ts'
 
 const HOST_KEY = makeKeyBlob('ssh-ed25519', 7)
 
@@ -127,6 +127,79 @@ function scripted(script: Script): { factory: () => SshClientLike; attempts: Att
     return client as unknown as SshClientLike
   }
   return { factory, attempts }
+}
+
+/** One scripted server's SFTP directory contents, keyed by remote path. */
+interface Listing {
+  entries: { name: string; dir: boolean }[]
+  failReaddir?: boolean
+}
+
+function scriptedWithSftp(script: Script, listings: Map<string, Listing> = new Map()): {
+  factory: () => SshClientLike
+  attempts: Attempt[]
+  execs: string[]
+  mkdirs: string[]
+} {
+  const attempts: Attempt[] = []
+  const execs: string[] = []
+  const mkdirs: string[] = []
+  const base = scripted(script)
+  const factory = (): SshClientLike => {
+    const client = base.factory()
+    const innerExec = client.exec.bind(client) as (
+      command: string,
+      o: Record<string, unknown>,
+      cb: (e: Error | undefined, s: ClientChannel) => void,
+    ) => void
+    client.exec = (command: string, o: unknown, cb: (e: Error | undefined, s: ClientChannel) => void): void => {
+      execs.push(command)
+      innerExec(command, o as Record<string, unknown>, cb)
+    }
+    client.sftp = (cb: (err: Error | undefined, sftp: SFTPWrapper) => void): void => {
+      cb(undefined, fakeSftp(listings, mkdirs) as unknown as SFTPWrapper)
+    }
+    return client
+  }
+  return { factory, attempts, execs, mkdirs }
+}
+
+/** An SFTP session serving seeded listings and recording created directories. */
+function fakeSftp(listings: Map<string, Listing>, mkdirs: string[]) {
+  return {
+    readdir(dir: string, cb: (err: Error | null, entries?: unknown[]) => void): void {
+      const listing = listings.get(dir)
+      if (listing === undefined) {
+        const err = Object.assign(new Error('ENOENT'), { code: 2 })
+        cb(err)
+        return
+      }
+      if (listing.failReaddir) {
+        cb(Object.assign(new Error('EACCES'), { code: 3 }))
+        return
+      }
+      cb(null, listing.entries.map((e) => ({
+        filename: e.name,
+        attrs: {
+          isFile: () => !e.dir,
+          isDirectory: () => e.dir,
+          isSymbolicLink: () => false,
+          size: 0,
+          mtime: 1_700_000_000,
+          mtimeMs: 1_700_000_000_000,
+        },
+      })))
+    },
+    mkdir(p: string, cb: (err: Error | null) => void): void {
+      mkdirs.push(p)
+      cb(null)
+    },
+    stat(_p: string, cb: (err: Error | null, stats?: unknown) => void): void {
+      cb(Object.assign(new Error('ENOENT'), { code: 2 }), undefined)
+    },
+    on(): void {},
+    end(): void {},
+  }
 }
 
 /** A live HTTP server with the plugin's routes mounted, plus its base URL. */
@@ -343,6 +416,114 @@ test('naming a saved record on a probe tests that record, not the body', async (
     assert.equal(probe.ok, true)
     assert.equal(attempts.at(-1)?.password, 'stale')
   })
+})
+
+test('listing a directory keeps names holding newlines, tabs, and quotes whole', async () => {
+  const listings = new Map<string, Listing>([['/srv', {
+    entries: [
+      { name: 'ordinary', dir: true },
+      { name: 'has\nnewline', dir: true },
+      { name: 'has\ttab', dir: true },
+      { name: 'quote"name', dir: true },
+      { name: "back\\slash", dir: true },
+      { name: 'star*glob', dir: true },
+      { name: 'a-file.txt', dir: false },
+    ],
+  }]])
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-ls-'))
+  const { factory, execs } = scriptedWithSftp({ expectPassword: 'pw' }, listings)
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.1.1', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+    const listed = await post(`${url}/ls`, { machineId: id, path: '/srv' })
+    assert.equal(listed.ok, true)
+    const names = (listed.entries as { name: string }[]).map((e) => e.name)
+
+    // Every one of these is a legal POSIX file name, and each must arrive as
+    // the single entry it is. Listing by parsing `ls` output split a name
+    // holding a newline into two rows and misread fragments as directories.
+    assert.deepEqual(names, ['ordinary', 'has\nnewline', 'has\ttab', 'quote"name', 'back\\slash', 'star*glob'])
+    // The browse dialog only navigates directories.
+    assert.equal(names.includes('a-file.txt'), false)
+    // The listing came from SFTP, not from a shell pipeline.
+    assert.equal(execs.some((c) => c.includes('ls -1Ap')), false)
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a listing entry is joined to its parent without mangling the name', async () => {
+  const listings = new Map<string, Listing>([['/srv/app', { entries: [{ name: 'we ird/../name', dir: true }] }]])
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-ls2-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' }, listings)
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.1.2', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+    const listed = await post(`${url}/ls`, { machineId: id, path: '/srv/app' })
+    const entry = (listed.entries as { name: string; path: string }[])[0]!
+    // The name is the remote's own; the path is a plain join of the two and is
+    // not normalized again, or a name holding `/` or `..` would address
+    // somewhere other than the entry that was listed.
+    assert.equal(entry.name, 'we ird/../name')
+    assert.equal(entry.path, '/srv/app/we ird/../name')
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('creating a folder never reaches a remote shell', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-mkdir-'))
+  const { factory, execs, mkdirs } = scriptedWithSftp({ expectPassword: 'pw' })
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.1.3', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+
+    // A name a login shell would evaluate: `rm -rf` needs no escaping, and
+    // `$(...)` would have been substituted by the remote shell before mkdir
+    // ever saw it. Over SFTP the name is data.
+    const hostile = '$(id)`whoami`;rm -rf ~;'
+    const created = await post(`${url}/mkdir`, { machineId: id, path: '/srv', name: hostile })
+    assert.equal(created.ok, true)
+    assert.equal(created.path, `/srv/${hostile}`)
+    // The name reaches SFTP as one path whose final segment is the name
+    // verbatim — created as data, never assembled into a command line.
+    assert.equal(mkdirs.at(-1), `/srv/${hostile}`)
+    // No command line was composed from the name at all.
+    assert.equal(execs.some((c) => c.includes('mkdir')), false)
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a listing that the server refuses reports why', async () => {
+  const listings = new Map<string, Listing>([['/srv', { entries: [], failReaddir: true }]])
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-ls3-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' }, listings)
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.1.4', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+    const listed = await post(`${url}/ls`, { machineId: id, path: '/srv' })
+    assert.equal(listed.ok, false)
+    assert.ok(String(listed.error).length > 0, 'the refusal carries a reason')
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('testing a machine the registry does not know is refused', async () => {
