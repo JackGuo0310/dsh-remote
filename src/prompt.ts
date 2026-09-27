@@ -66,17 +66,30 @@ export function registerPrompt(ctx: Context, world: RemoteWorld): void {
   const fibers = new Map<Agent, ReturnType<Context['inject']>>()
   const install = (agent: Agent): void => {
     if (fibers.has(agent)) return
-    fibers.set(agent, agent.ctx.inject(['systemPrompt'], (scope) => {
-      scope.systemPrompt.variable('cwd', (context) => {
-        const cwd = context.agent?.session?.header?.cwd
-        if (!cwd) return undefined
-        const local = world.classifyHostPath(cwd)
-        if (local.kind !== 'remote') return cwd
-        // An anchor whose machine is gone reports its local handle: the
-        // remote path would name a directory no tool can reach.
-        return world.machineForAnchor(local.route.anchor) ? local.route.remotePath : cwd
+    let fiber: ReturnType<Context['inject']>
+    try {
+      fiber = agent.ctx.inject(['systemPrompt'], (scope) => {
+        scope.systemPrompt.variable('cwd', (context) => {
+          const cwd = context.agent?.session?.header?.cwd
+          if (!cwd) return undefined
+          const local = world.classifyHostPath(cwd)
+          if (local.kind !== 'remote') return cwd
+          // An anchor whose machine is gone reports its local handle: the
+          // remote path would name a directory no tool can reach.
+          return world.machineForAnchor(local.route.anchor) ? local.route.remotePath : cwd
+        })
       })
-    }))
+    } catch (err) {
+      // The agent is disposing or already disposed, and its context refuses
+      // registration from here on. It is about to emit `agent/disposed`, which
+      // cleans up after itself, so there is nothing to install and nothing to
+      // undo. This must not escape: the plugin still has its prompt section,
+      // its routing providers, and every other agent to serve, and a throw
+      // here would abort the whole load.
+      ctx.logger.debug(`dsh-remote-development: skipping cwd override for an agent that is closing: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    fibers.set(agent, fiber)
   }
   const dispose = (agent: Agent): void => {
     const fiber = fibers.get(agent)

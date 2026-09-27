@@ -57,18 +57,29 @@ export function registerToolVisibility(ctx: Context, world: RemoteWorld): void {
   const fibers = new Map<Agent, ReturnType<Context['inject']>>()
   const install = (agent: Agent): void => {
     if (fibers.has(agent)) return
-    fibers.set(agent, agent.ctx.inject(['tools'], (scope) => {
-      const deny = denyListFor(
-        world,
-        agent.session?.header?.cwd,
-        (name) => scope.tools.get(name) !== undefined,
-        process.platform,
-      )
-      // An empty deny list must not register: the restriction API treats an
-      // empty filter as a configuration bug and fails loud.
-      if (deny.length === 0) return
-      scope.tools.restrict({ deny })
-    }))
+    let fiber: ReturnType<Context['inject']>
+    try {
+      fiber = agent.ctx.inject(['tools'], (scope) => {
+        const deny = denyListFor(
+          world,
+          agent.session?.header?.cwd,
+          (name) => scope.tools.get(name) !== undefined,
+          process.platform,
+        )
+        // An empty deny list must not register: the restriction API treats an
+        // empty filter as a configuration bug and fails loud.
+        if (deny.length === 0) return
+        scope.tools.restrict({ deny })
+      })
+    } catch (err) {
+      // The agent is closing and its context refuses registration. It is about
+      // to emit `agent/disposed`, which disposes whatever was installed, so
+      // skipping is complete and leaves nothing behind. Swallowing the throw
+      // keeps one closing agent from aborting the whole plugin load.
+      ctx.logger.debug(`dsh-remote-development: skipping tool visibility for an agent that is closing: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    fibers.set(agent, fiber)
   }
   const dispose = (agent: Agent): void => {
     const fiber = fibers.get(agent)
