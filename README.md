@@ -42,16 +42,26 @@ Check the host dsh version first:
 dsh -V
 ```
 
-Then pick the plugin version from [Compatibility](#compatibility). **Always install with a `#<tag>` ref**: a `github:` install without one takes the default branch HEAD, which drifts, and the plugin and its host must be from the same generation to run.
+Then pick the plugin version from [Compatibility](#compatibility).
 
 | Your dsh | Plugin version | Install command |
 | --- | --- | --- |
-| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.3` |
+| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web @jackguo0310/dsh-remote` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
-The built `lib/` is committed with each tag, so a tag install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records the ref you chose.
+The npm install takes the `latest` dist-tag, so it tracks new releases. Pin an exact version when you need one:
 
-To change versions, re-add with the new ref; to remove the plugin, `dsh plugin remove --profile web @jackguo0310/dsh-remote`.
+```sh
+dsh plugin add --profile web @jackguo0310/dsh-remote@0.2.3
+```
+
+npm resolves and checks the plugin's peer dependencies at install time, so a dsh version the plugin does not support fails immediately and names the unsatisfied packages, rather than failing later at load.
+
+v0.1.x predates the npm package and is only available as a GitHub tag. **Always install that one with a `#<tag>` ref**: a `github:` install without one takes the default branch HEAD, which drifts, and the plugin and its host must be from the same generation to run.
+
+The built `lib/` ships in both the npm tarball and each Git tag, so neither route needs a build step and neither hits pnpm's `allowBuilds` gate for `prepare` scripts.
+
+To change versions, re-add with the new spec; to remove the plugin, `dsh plugin remove --profile web @jackguo0310/dsh-remote`.
 
 For development, link a local checkout instead:
 

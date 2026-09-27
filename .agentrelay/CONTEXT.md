@@ -38,3 +38,14 @@
 - 日期（UTC+8）：2026-09-27
 - 理由：devDependencies 精确锁 `0.1.7-rc.2`（peerDependencies 保持范围）。rc.2 的包把 `dsh-bash-local`、`dsh-util-values`、`dsh-scope` 等声明为 peer 且精确钉 `0.1.7-rc.2`；漏列这些 peer 时 pnpm 会装到旧版，TypeScript 解析不到基类，症状伪装成 API 破坏（`SandboxBashExecutor.Config` 报不存在、`FsError` 报缺 `name`/`message`）。补齐 peer 是修好 typecheck 的关键一步。
 - 失效条件：升级 DSH 宿主版本时，同步更新 devDependencies 全部 `dsh-*`、补齐新增 peer，并重跑 `pnpm install` + `pnpm run typecheck`。
+
+### ADR-003: 双轨发布——npm 为新版首选，Git tag 保留
+
+- 状态：active
+- 决策人：user
+- 记录人：dsh
+- 日期（UTC+8）：2026-09-27
+- 事实：`@jackguo0310/dsh-remote` 已于 2026-09-27 首次发布到 npmjs（`0.2.3`，包名不可再更改，npm 规则只允许弃用不允许删除）。`v0.1.0` 从未发过 npm，仅存在于 Git tag。
+- 理由：新版安装走 npm 是因为它会在安装时校验 peer 依赖，dsh 版本不匹配当场报错并列出不满足的包，而 GitHub ref 安装要等到加载期才暴露问题。旧版没有 npm 包，只能继续用带 `#<tag>` 的 GitHub 安装——不带 ref 会取默认分支 HEAD 并随仓库漂移。README 两处（`README.md` / `README.zh.md`）都必须同时更新这两种方式，漏一处就会出现装不上的用户。
+- 本机注意：npm 全局 registry 是 `registry.npmmirror.com`（国内镜像），发布必须显式 `--registry=https://registry.npmjs.org/`；`npm pack --dry-run` 与 `npm view` 也需带该参数，否则走镜像。npm 凭据由用户自行管理，Agent 不持有 token。
+- 失效条件：若 v0.1.x 也发到 npm，则旧版那一行改用 npm spec，两轨并存的说明可简化。

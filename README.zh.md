@@ -42,16 +42,26 @@
 dsh -V
 ```
 
-再按[兼容性](#兼容性)选插件版本。**安装命令一律带 `#<tag>`**：不带 ref 的 `github:` 安装取默认分支 HEAD，会随仓库漂移，而插件与宿主必须同代才能运行。
+再按[兼容性](#兼容性)选插件版本。
 
 | 你的 dsh | 插件版本 | 安装命令 |
 | --- | --- | --- |
-| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.2.3` |
+| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web @jackguo0310/dsh-remote` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
-`lib/` 构建产物随 tag 入库，所以从 tag 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你选的那个 ref。
+npm 安装取的是 `latest` dist-tag，会跟随新版本发布。需要锁定具体版本时：
 
-换版本：用新的 ref 重新 add 即覆盖；彻底移除则 `dsh plugin remove --profile web @jackguo0310/dsh-remote`。
+```sh
+dsh plugin add --profile web @jackguo0310/dsh-remote@0.2.3
+```
+
+npm 会在安装时就解析并校验插件的 peer 依赖，因此 dsh 版本不受支持会**当场报错并列出不满足的包**，而不是等到加载时才失败。
+
+v0.1.x 早于 npm 发版，只以 Git tag 形式提供。**该版本一律带 `#<tag>` 安装**：不带 ref 的 `github:` 安装取默认分支 HEAD，会随仓库漂移，而插件与宿主必须同代才能运行。
+
+`lib/` 构建产物同时随 npm tarball 和每个 Git tag 发布，所以两种方式都无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。
+
+换版本：用新的 spec 重新 add 即覆盖；彻底移除则 `dsh plugin remove --profile web @jackguo0310/dsh-remote`。
 
 开发模式则链接本地检出：
 
