@@ -18,6 +18,10 @@ export interface ClientMachine {
   hasPassphrase: boolean
   hostKeyMode: string
   proxyHost: string
+  /** The jump host's port; 22 when unset. The client form writes it back. */
+  proxyPort: number
+  /** The jump host's login user; '' when unset. The client form writes it back. */
+  proxyUser: string
   workspace: string
   /** Folder-icon color marking this machine's workspaces ('' = theme default). */
   color: string
@@ -46,6 +50,36 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T
 }
 
+/**
+ * A probe whose `ok:false` is a result, not a transport failure: the host
+ * answers a failed connection with HTTP 200 and the reason in `error`, so the
+ * settings page can show "why" instead of a generic request error. Only a
+ * transport fault — a dead server, an aborted fetch — has no answer to return,
+ * so it resolves as a failed probe carrying that fault's message.
+ */
+async function probe(path: string, body: unknown): Promise<ProbeResult> {
+  const opts: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }
+  let res: Response
+  try {
+    res = await fetch(PREFIX + path, opts)
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) {
+    return { ok: false, error: typeof data.error === 'string' ? data.error : `HTTP ${res.status}` }
+  }
+  return {
+    ok: data.ok !== false,
+    ...(typeof data.error === 'string' ? { error: data.error } : {}),
+    ...(typeof data.platform === 'string' ? { platform: data.platform } : {}),
+  }
+}
+
 /** List saved machines. */
 export function listMachines(): Promise<{ machines: ClientMachine[] }> {
   return call('GET', '/machines')
@@ -61,9 +95,20 @@ export function deleteMachine(id: string): Promise<{ ok: boolean }> {
   return call('POST', '/machines/delete', { id })
 }
 
-/** Test one machine's connection (saved id or unsaved fields). */
-export function testConnection(machine: Record<string, unknown>): Promise<{ ok: boolean; error?: string; platform?: string }> {
-  return call('POST', '/test', machine)
+/** One probe's verdict: it succeeded, or it failed and why. */
+export interface ProbeResult {
+  ok: boolean
+  error?: string
+  platform?: string
+}
+
+/**
+ * Test one machine's connection. Either a saved `machineId` or the unsaved
+ * draft fields. A refusal resolves with `ok:false` and a reason, so the caller
+ * reports the host's own message; only a transport fault surfaces as a throw.
+ */
+export function testConnection(machine: Record<string, unknown>): Promise<ProbeResult> {
+  return probe('/test', machine)
 }
 
 /** List one remote directory level. */

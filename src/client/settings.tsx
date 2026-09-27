@@ -13,14 +13,14 @@ import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the settings section owner-share declaration.
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ClientMachine } from './api.ts'
+import type { ClientMachine, ProbeResult } from './api.ts'
 
 /** Injected face bound in the plugin's apply closure. */
 export interface SettingsInjected {
   listMachines: () => Promise<{ machines: ClientMachine[] }>
   saveMachine: (machine: Record<string, unknown>) => Promise<{ machine: ClientMachine }>
   deleteMachine: (id: string) => Promise<{ ok: boolean }>
-  testConnection: (machine: Record<string, unknown>) => Promise<{ ok: boolean; error?: string; platform?: string }>
+  testConnection: (machine: Record<string, unknown>) => Promise<ProbeResult>
   /** Re-read the anchors and recolor the workspace tree's remote markers. */
   refreshTreeMark: () => Promise<void>
   t: Translate
@@ -62,6 +62,9 @@ const EMPTY_DRAFT: Draft = {
   color: '',
 }
 
+/** The `probing` sentinel for a probe of the open form rather than a saved machine. */
+const DRAFT_PROBE = 'draft'
+
 function field(label: string, value: string, onChange: (v: string) => void, placeholder?: string, type?: string): ReactElement {
   return createElement('label', { className: 'rdv-field' },
     createElement('span', { className: 'rdv-label' }, label),
@@ -93,6 +96,13 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const [deleteTarget, setDeleteTarget] = useState<ClientMachine | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // Which probe is in flight, if any: a saved machine's id, or DRAFT_PROBE for
+  // the open form. One slot at a time is deliberate — a second concurrent probe
+  // would race its verdict into the wrong target, and the buttons disable
+  // while one runs. `null` is idle, which a machine id can never be.
+  const [probing, setProbing] = useState<string | null>(null)
+  const [draftResult, setDraftResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [machineResults, setMachineResults] = useState<Record<string, { ok: boolean; text: string }>>({})
 
   // The palette belongs to one draft form; closing the form closes it too.
   useEffect(() => { if (draft === null) setPaletteOpen(false) }, [draft])
@@ -105,30 +115,60 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
 
   useEffect(() => { refresh() }, [refresh])
 
+  /**
+   * The wire payload for the open draft's fields. An untouched stored password
+   * is omitted rather than sent empty, so probing a saved machine's edit keeps
+   * the secret the host already holds.
+   *
+   * The machine `id` is deliberately absent: it identifies the record being
+   * replaced on save, but naming it on a probe would make the host test the
+   * saved machine instead of the fields actually typed into the form.
+   */
+  const draftFields = useCallback((d: Draft): Record<string, unknown> => ({
+    name: d.name || d.host,
+    host: d.host.trim(),
+    port: Number(d.port) || 22,
+    username: d.username.trim(),
+    password: d.auth === 'password' ? (d.password === '' && d.hasPassword ? undefined : d.password) : '',
+    privateKeyPath: d.auth === 'key' ? d.privateKeyPath.trim() : '',
+    useAgent: d.auth === 'agent',
+    keyboardInteractive: d.keyboardInteractive,
+    proxyHost: d.proxyHost.trim(),
+    proxyPort: Number(d.proxyPort) || 22,
+    proxyUser: d.proxyUser.trim(),
+    color: d.color.trim(),
+  }), [])
+
+  const resultText = (r: ProbeResult): string =>
+    r.ok
+      ? `${t('settings.connected')}${r.platform ? ' · ' + t('settings.platform').replace('{platform}', r.platform) : ''}`
+      : r.error ?? t('settings.testFailed')
+
+  /** Probe the open draft, without saving it. */
+  const testDraft = (): void => {
+    if (!draft) return
+    if (!draft.host.trim()) { setError(t('settings.host') + ' ?'); return }
+    setError('')
+    setDraftResult(null)
+    setProbing(DRAFT_PROBE)
+    void props.testConnection(draftFields(draft)).then((r) => {
+      setDraftResult({ ok: r.ok, text: resultText(r) })
+      setProbing(null)
+    }).catch((err: Error) => {
+      setDraftResult({ ok: false, text: err.message })
+      setProbing(null)
+    })
+  }
+
   const save = (): void => {
     if (!draft) return
     if (!draft.host.trim()) { setError(t('settings.host') + ' ?'); return }
     setBusy(true)
     setError('')
-    void props.saveMachine({
-      id: draft.id || undefined,
-      name: draft.name || draft.host,
-      host: draft.host.trim(),
-      port: Number(draft.port) || 22,
-      username: draft.username.trim(),
-      // An untouched stored password travels as absent: the server keeps the
-      // stored secret, since the wire never echoes one back.
-      password: draft.auth === 'password' ? (draft.password === '' && draft.hasPassword ? undefined : draft.password) : '',
-      privateKeyPath: draft.auth === 'key' ? draft.privateKeyPath.trim() : '',
-      useAgent: draft.auth === 'agent',
-      keyboardInteractive: draft.keyboardInteractive,
-      proxyHost: draft.proxyHost.trim(),
-      proxyPort: Number(draft.proxyPort) || 22,
-      proxyUser: draft.proxyUser.trim(),
-      color: draft.color.trim(),
-    }).then(() => {
+    void props.saveMachine({ ...draftFields(draft), id: draft.id || undefined }).then(() => {
       setDraft(null)
       setBusy(false)
+      setDraftResult(null)
       refresh()
       // A color change re-marks every workspace the machine serves.
       void props.refreshTreeMark()
@@ -138,17 +178,16 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     })
   }
 
-  const test = (machine: Record<string, unknown>): void => {
-    setBusy(true)
+  /** Probe one saved machine by id. */
+  const test = (machine: ClientMachine): void => {
     setError('')
-    setNotice('')
-    void props.testConnection(machine).then((r) => {
-      setBusy(false)
-      if (r.ok) setNotice(`${t('settings.connected')}${r.platform ? ' · ' + t('settings.platform').replace('{platform}', r.platform) : ''}`)
-      else setError(r.error ?? t('settings.testFailed'))
+    setProbing(machine.id)
+    void props.testConnection({ machineId: machine.id }).then((r) => {
+      setMachineResults((prev) => ({ ...prev, [machine.id]: { ok: r.ok, text: resultText(r) } }))
+      setProbing(null)
     }).catch((err: Error) => {
-      setBusy(false)
-      setError(err.message)
+      setMachineResults((prev) => ({ ...prev, [machine.id]: { ok: false, text: err.message } }))
+      setProbing(null)
     })
   }
 
@@ -158,6 +197,12 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     void props.deleteMachine(machine.id).then(() => {
       setBusy(false)
       setDeleteTarget(null)
+      // The deleted machine's verdict is no longer about anything on screen.
+      setMachineResults((prev) => {
+        const next = { ...prev }
+        delete next[machine.id]
+        return next
+      })
       refresh()
       // The surviving anchors lose their machine join and fall back to the
       // default marker color.
@@ -173,7 +218,7 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     draft === null && createElement('div', { className: 'rdv-actions', style: { justifyContent: 'flex-start', marginTop: 0 } },
       createElement(Button, {
         variant: 'primary',
-        onClick: () => { setDraft({ ...EMPTY_DRAFT }); setError(''); setNotice('') },
+        onClick: () => { setDraft({ ...EMPTY_DRAFT }); setError(''); setNotice(''); setDraftResult(null) },
       }, t('settings.add')),
     ),
     error && createElement('div', { className: 'rdv-error' }, error),
@@ -181,7 +226,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     createElement('div', { className: 'rdv-cards' },
       machines.length === 0 && draft === null
         ? createElement('div', { className: 'rdv-empty' }, t('settings.noMachines'))
-        : machines.map((m) => createElement('div', { key: m.id, className: 'rdv-card' },
+        : machines.map((m) => {
+            const result = machineResults[m.id]
+            return createElement('div', { key: m.id, className: 'rdv-card' },
             createElement('div', { className: 'rdv-cardMain' },
               createElement('div', { className: 'rdv-cardName' },
                 m.color !== '' && createElement('span', {
@@ -192,35 +239,50 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
               ),
               createElement('div', { className: 'rdv-cardHost' }, `${m.username}@${m.host}:${m.port}`),
             ),
+            // Each machine keeps its own last probe result: the cards list
+            // independent servers, so one failure must not read as the verdict
+            // on the next.
+            result && createElement('div', { className: result.ok ? 'rdv-ok' : 'rdv-error' }, result.text),
             createElement('div', { className: 'rdv-cardActions' },
-              createElement(Button, { size: 'sm', disabled: busy, onClick: () => test({ machineId: m.id }) }, t('settings.test')),
               createElement(Button, {
                 size: 'sm',
-                disabled: busy,
-                onClick: () => setDraft({
-                  id: m.id,
-                  name: m.name,
-                  host: m.host,
-                  port: String(m.port),
-                  username: m.username,
-                  auth: m.hasPassword ? 'password' : (m.privateKeyPath ? 'key' : 'agent'),
-                  password: '',
-                  hasPassword: m.hasPassword,
-                  privateKeyPath: m.privateKeyPath,
-                  proxyHost: m.proxyHost,
-                  proxyPort: '22',
-                  proxyUser: '',
-                  keyboardInteractive: m.keyboardInteractive,
-                  color: m.color,
-                }),
+                disabled: busy || probing !== null,
+                onClick: () => test(m),
+              }, probing === m.id ? t('settings.testing') : t('settings.test')),
+              createElement(Button, {
+                size: 'sm',
+                disabled: busy || probing !== null,
+                onClick: () => {
+                  setError('')
+                  setDraftResult(null)
+                  setDraft({
+                    id: m.id,
+                    name: m.name,
+                    host: m.host,
+                    port: String(m.port),
+                    username: m.username,
+                    auth: m.hasPassword ? 'password' : (m.privateKeyPath ? 'key' : 'agent'),
+                    password: '',
+                    hasPassword: m.hasPassword,
+                    privateKeyPath: m.privateKeyPath,
+                    proxyHost: m.proxyHost,
+                    // Without these two the save rewrites the jump host as port
+                    // 22 with no user, silently dropping the real values.
+                    proxyPort: String(m.proxyPort || 22),
+                    proxyUser: m.proxyUser,
+                    keyboardInteractive: m.keyboardInteractive,
+                    color: m.color,
+                  })
+                },
               }, t('settings.edit')),
               createElement(Button, {
                 size: 'sm',
-                disabled: busy,
+                disabled: busy || probing !== null,
                 onClick: () => { setDeleteTarget(m); setDeleteError('') },
               }, t('settings.delete')),
             ),
-          )),
+          )
+          }),
     ),
     draft !== null && createElement('div', { className: 'rdv-form' },
       createElement('div', { className: 'rdv-row' },
@@ -308,8 +370,15 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
           t('settings.keyboardInteractive'),
         ),
       ),
+      draftResult && createElement('div', { className: draftResult.ok ? 'rdv-ok' : 'rdv-error' }, draftResult.text),
       createElement('div', { className: 'rdv-actions' },
-        createElement(Button, { disabled: busy, onClick: () => setDraft(null) }, t('settings.cancel')),
+        createElement(Button, { disabled: busy, onClick: () => { setDraft(null); setDraftResult(null) } }, t('settings.cancel')),
+        // Probe before saving: a machine is only worth keeping once it answers,
+        // and testing the draft here costs nothing and stores nothing.
+        createElement(Button, {
+          disabled: busy || probing !== null,
+          onClick: testDraft,
+        }, probing === DRAFT_PROBE ? t('settings.testing') : t('settings.test')),
         createElement(Button, { variant: 'primary', disabled: busy, onClick: save }, t('settings.save')),
       ),
     ),

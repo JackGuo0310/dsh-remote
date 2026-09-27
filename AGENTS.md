@@ -14,7 +14,7 @@
 
 | 本地目录 | Git 仓库 | 用途 |
 | --- | --- | --- |
-| `otherRepo/deepseek-harness-0.1.7-rc.1` | `https://github.com/deepseek-ai/deepseek-harness.git` | DSH `0.1.7-rc.1` 宿主源码、插件管理器、热加载和服务生命周期参考 |
+| `otherRepo/deepseek-harness-0.1.7-rc.2` | `https://github.com/deepseek-ai/deepseek-harness.git` | DSH `0.1.7-rc.2` 宿主源码、插件管理器、热加载和服务生命周期参考 |
 | `otherRepo/dsh-remote-development` | `https://github.com/CJYLZS/dsh-remote-development.git` | 原始 dsh-remote 实现参考 |
 | `otherRepo/flymysql-dsh-remote` | `https://github.com/flymysql/dsh-remote.git` | 同类远程开发插件参考 |
 | `otherRepo/UynajGI-dsh-ssh` | `https://github.com/UynajGI/dsh-ssh.git` | SSH / 远程执行插件参考 |
@@ -25,7 +25,7 @@
 ```powershell
 New-Item -ItemType Directory -Force otherRepo | Out-Null
 $repos = @{
-  'deepseek-harness-0.1.7-rc.1' = 'https://github.com/deepseek-ai/deepseek-harness.git'
+  'deepseek-harness-0.1.7-rc.2' = 'https://github.com/deepseek-ai/deepseek-harness.git'
   'dsh-remote-development' = 'https://github.com/CJYLZS/dsh-remote-development.git'
   'flymysql-dsh-remote' = 'https://github.com/flymysql/dsh-remote.git'
   'UynajGI-dsh-ssh' = 'https://github.com/UynajGI/dsh-ssh.git'
@@ -39,4 +39,4 @@ foreach ($entry in $repos.GetEnumerator()) {
 }
 ```
 
-其中 DSH 参考仓库应检出 `0.1.7-rc.1` 对应的提交或标签；其他仓库默认使用远程默认分支即可。
+其中 DSH 参考仓库应检出 `dsh-v0.1.7-rc.2` 标签（实际标签名带 `dsh-v` 前缀）；其他仓库默认使用远程默认分支即可。

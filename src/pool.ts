@@ -120,11 +120,11 @@ export class SshPool {
    * @param hostKeys - durable TOFU storage.
    * @param newClient - client factory (tests inject fakes).
    */
-  constructor(target: PoolTarget, tunables: PoolTunables, hostKeys: HostKeyStore, newClient: ClientFactory = () => new Client() as unknown as SshClientLike) {
+  constructor(target: PoolTarget, tunables: PoolTunables, hostKeys: HostKeyStore, newClient?: ClientFactory) {
     this.target = { ...target }
     this.tunablesSnapshot = { ...tunables }
     this.hostKeys = hostKeys
-    this.newClient = newClient
+    this.newClient = newClient ?? (() => new Client() as unknown as SshClientLike)
   }
 
   /** The identity this pool is pinned to. */

@@ -24,3 +24,14 @@ test('machineFromBody keeps the proxy password when the body omits it', () => {
   const set = machineFromBody({ name: 'a', host: 'h', port: 22, username: 'u', proxyHost: 'bastion', proxyPassword: 'bp' })
   assert.equal(set.proxy?.password, 'bp')
 })
+
+test('machineFromBody reads the jump host user under either field name', () => {
+  // The client form has always written `proxyUser`; a server that only read
+  // `proxyUsername` dropped the jump host's login user on every save.
+  const formField = machineFromBody({ host: 'h', port: 22, username: 'u', proxyHost: 'bastion', proxyPort: '2222', proxyUser: 'jump' })
+  assert.equal(formField.proxy?.username, 'jump')
+  assert.equal(formField.proxy?.port, 2222)
+
+  const legacyField = machineFromBody({ host: 'h', port: 22, username: 'u', proxyHost: 'bastion', proxyUsername: 'jump' })
+  assert.equal(legacyField.proxy?.username, 'jump')
+})

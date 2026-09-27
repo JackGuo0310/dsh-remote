@@ -12,7 +12,7 @@ import path from 'node:path'
 import { HostKeyGuard } from './hostkey.ts'
 import type { KnownHostEntry } from './hostkey.ts'
 import { SshPool, UnsupportedRemoteError } from './pool.ts'
-import type { PoolTarget, PoolTunables } from './pool.ts'
+import type { ClientFactory, PoolTarget, PoolTunables } from './pool.ts'
 import { ANCHOR_META_FILE, createAnchorDir, matchRemotePath, scanAnchors } from './anchors.ts'
 import type { AnchorInfo, AnchorMeta } from './anchors.ts'
 import { loadRegistry, machineId, registryExists, saveRegistry, sanitizeMachine } from './registry.ts'
@@ -52,12 +52,16 @@ export class RemoteWorld {
   private registry: RegistryData
   private anchorCache: AnchorInfo[] | null = null
   private readonly pools = new Map<string, SshPool>()
+  private readonly newClient: ClientFactory | undefined
 
   /**
    * @param config - validated plugin config.
+   * @param newClient - SSH client factory, so a test can drive the real
+   *   routes and pools over a scripted transport instead of a live server.
    */
-  constructor(config: Config) {
+  constructor(config: Config, newClient?: ClientFactory) {
     this.config = config
+    this.newClient = newClient
     const base = config.anchorRoot.trim() || path.join(dshHome(), 'remote-workspaces')
     this.anchorRoot = base
     this.registryFile = path.join(base, 'machines.json')
@@ -108,23 +112,64 @@ export class RemoteWorld {
    */
   upsertMachine(raw: MachineInput): Machine {
     const machine = sanitizeMachine(raw)
-    const stored = this.registry.machines.find((m) => m.id === machine.id)
-    if (stored === undefined) {
+    // A record is located by the id the wire named, or else by the identity
+    // triple an id is derived from. The second lookup is what makes editing a
+    // machine's address an update: the id still spells the OLD host, so
+    // matching on it alone would append a second machine and orphan the first.
+    const named = String(raw.id ?? '').trim()
+    const index = this.registry.machines.findIndex((m) => (named !== '' ? m.id === named : m.id === machine.id))
+    if (index < 0) {
       this.registry.machines.push(machine)
       saveRegistry(this.registryFile, this.registry)
       return machine
     }
+    const stored = this.registry.machines[index]!
     const merged: Machine = {
       ...machine,
+      // The id is the identity triple, not a field a save may rename: leaving
+      // the stale one would make the record unresolvable from its own anchor.
+      id: machineId(machine.host, machine.port, machine.username),
       password: raw.password ?? stored.password,
       passphrase: raw.passphrase ?? stored.passphrase,
     }
     if (machine.proxy) {
       merged.proxy = { ...machine.proxy, password: raw.proxy?.password ?? stored.proxy?.password ?? '' }
     }
-    this.registry.machines[this.registry.machines.indexOf(stored)] = merged
+    // A machine cannot exist twice: the edited record may now carry an id
+    // another record already holds, in which case that record is this one.
+    const duplicate = this.registry.machines.findIndex((m, i) => i !== index && m.id === merged.id)
+    if (duplicate >= 0) this.registry.machines.splice(duplicate, 1)
+    this.registry.machines[index] = merged
     saveRegistry(this.registryFile, this.registry)
+    // A pool pins the credentials it was built with and only re-reads its
+    // timeouts, so a machine whose connection facts just changed would keep
+    // answering on the previous password, key, or jump host. Drop it so the
+    // next call — including the settings page's test-connection — reconnects.
+    if (connectionSignature(stored) !== connectionSignature(merged)) {
+      this.evictPools(stored.id)
+      if (stored.id !== merged.id) this.evictPools(merged.id)
+    }
     return merged
+  }
+
+  /** Close and forget every pool belonging to one machine id. */
+  private evictPools(machineId: string): void {
+    const prefix = machineId + '\u0000'
+    for (const [key, pool] of [...this.pools]) {
+      if (!key.startsWith(prefix)) continue
+      try { pool.close() } catch { /* pool already torn down */ }
+      this.pools.delete(key)
+    }
+  }
+
+  /**
+   * How many connections the pool map currently holds. Exists so a test can
+   * observe that a retired or probe-released connection is really gone, which
+   * no other member of the world exposes.
+   * @returns the live pool count.
+   */
+  get poolCount(): number {
+    return this.pools.size
   }
 
   /**
@@ -138,11 +183,7 @@ export class RemoteWorld {
     if (index < 0) return false
     this.registry.machines.splice(index, 1)
     saveRegistry(this.registryFile, this.registry)
-    const key = [...this.pools.keys()].find((k) => k.startsWith(id + '\u0000'))
-    if (key) {
-      this.pools.get(key)?.close()
-      this.pools.delete(key)
-    }
+    this.evictPools(id)
     return true
   }
 
@@ -198,13 +239,44 @@ export class RemoteWorld {
   }
 
   /**
-   * A non-persisted machine reference for one-shot flows (test-connection
-   * with unsaved fields).
-   * @param raw - partial machine fields.
-   * @returns the ephemeral machine reference.
+   * A self-contained machine reference for a one-shot probe (testing an unsaved
+   * draft). It gets its own pool rather than one from the shared map, so a
+   * draft can never inherit, disturb, or outlive a saved machine's connection.
+   * @param raw - partial machine fields; an absent secret inherits the saved
+   *   machine with the same identity, so testing a stored machine's edit with
+   *   an untouched password field uses the stored one.
+   * @returns the probe: its machine reference, its private pool, and the
+   *   release that closes that pool.
    */
-  ephemeralRef(raw: MachineInput): MachineRef {
-    return { source: 'config', machine: sanitizeMachine(raw) }
+  ephemeralRefForTest(raw: MachineInput): { ref: MachineRef; pool: SshPool; release: () => void } {
+    const machine = sanitizeMachine(raw)
+    const stored = this.registry.machines.find((m) => m.id === machine.id)
+    const resolved: Machine = stored === undefined
+      ? machine
+      : {
+          ...machine,
+          password: raw.password ?? stored.password,
+          passphrase: raw.passphrase ?? stored.passphrase,
+          ...(machine.proxy === undefined
+            ? {}
+            : { proxy: { ...machine.proxy, password: raw.proxy?.password ?? stored.proxy?.password ?? '' } }),
+        }
+    const pool = new SshPool(
+      this.poolTarget(resolved),
+      this.tunables(),
+      {
+        read: () => this.readKnownHosts(),
+        write: (entries) => this.writeKnownHosts(entries),
+      },
+      this.newClient,
+    )
+    return {
+      ref: { source: 'config', machine: resolved },
+      pool,
+      release: () => {
+        try { pool.close() } catch { /* pool already torn down */ }
+      },
+    }
   }
 
   // ── anchors ───────────────────────────────────────────────────────────────
@@ -269,7 +341,7 @@ export class RemoteWorld {
    */
   poolFor(ref: MachineRef): SshPool {
     const m = ref.machine
-    const key = m.id + '\u0000' + m.host + '\u0000' + m.port + '\u0000' + m.username
+    const key = poolKey(m)
     const existing = this.pools.get(key)
     if (existing) {
       existing.retune(this.tunables())
@@ -282,6 +354,7 @@ export class RemoteWorld {
         read: () => this.readKnownHosts(),
         write: (entries) => this.writeKnownHosts(entries),
       },
+      this.newClient,
     )
     this.pools.set(key, pool)
     return pool
@@ -405,6 +478,24 @@ export class RemoteWorld {
 export interface AnchorRouteInfo {
   anchor: AnchorInfo
   remotePath: string
+}
+
+/** The pool-map key for one machine: its identity, not its credentials. */
+function poolKey(m: Machine): string {
+  return m.id + '\u0000' + m.host + '\u0000' + m.port + '\u0000' + m.username
+}
+
+/**
+ * The connection facts a pool pins at construction. A change here means the
+ * live connection no longer describes the machine, so its pool must go.
+ * @param m - the machine record.
+ * @returns a comparable signature.
+ */
+function connectionSignature(m: Machine): string {
+  return JSON.stringify([
+    m.host, m.port, m.username, m.password, m.privateKeyPath, m.passphrase,
+    m.useAgent, m.keyboardInteractive, m.hostKeyMode, m.proxy ?? null,
+  ])
 }
 
 /**

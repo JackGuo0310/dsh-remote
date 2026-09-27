@@ -165,3 +165,99 @@ test('upsertMachine keeps a proxy password the edit omits', () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('a corrected password reaches the next connection instead of the stale pool', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const saved = world.upsertMachine({ name: 'a', host: 'h3', port: 22, username: 'u', password: 'typo' })
+    const first = world.poolFor(world.machineById(saved.id)!)
+    assert.equal(first, world.poolFor(world.machineById(saved.id)!))
+
+    // A pool pins the credentials it connected with, so a changed password has
+    // to retire it — otherwise the settings page's retest keeps authenticating
+    // with the password the user just replaced.
+    world.upsertMachine({ id: saved.id, host: 'h3', port: 22, username: 'u', password: 'correct' })
+    const after = world.poolFor(world.machineById(saved.id)!)
+    assert.notEqual(after, first)
+    assert.equal(after.targetInfo.password, 'correct')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an edit that changes nothing connection-related keeps the live pool', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const saved = world.upsertMachine({ name: 'a', host: 'h4', port: 22, username: 'u', password: 'pw' })
+    const first = world.poolFor(world.machineById(saved.id)!)
+    // Renaming or recoloring a machine must not drop an open connection.
+    world.upsertMachine({ id: saved.id, name: 'renamed', host: 'h4', port: 22, username: 'u', password: undefined, color: '#3b82f6' })
+    assert.equal(world.poolFor(world.machineById(saved.id)!), first)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a draft probe inherits the stored secret and never touches the saved machine\'s pool', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const saved = world.upsertMachine({ name: 'a', host: 'h5', port: 22, username: 'u', password: 'secret' })
+    const owned = world.poolFor(world.machineById(saved.id)!)
+    assert.equal(world.poolCount, 1)
+
+    // The settings form never receives a stored password, so an untouched
+    // field arrives absent. The probe must fall back to what the host holds,
+    // or every retest of a saved machine would fail authentication.
+    const probe = world.ephemeralRefForTest({
+      id: saved.id, host: 'h5', port: 22, username: 'u', password: undefined,
+    })
+    assert.equal(probe.ref.machine.password, 'secret')
+    assert.equal(probe.pool.targetInfo.password, 'secret')
+    // The probe runs on a pool of its own, so the machine keeps its own
+    // connection and the probe cannot inherit or disturb it.
+    assert.notEqual(probe.pool, owned)
+    assert.equal(world.poolCount, 1)
+    probe.release()
+    assert.equal(world.poolFor(world.machineById(saved.id)!), owned)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an unsaved draft owns its probe connection and never enters the pool map', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    world.upsertMachine({ name: 'a', host: 'h8', port: 22, username: 'u', password: 'secret' })
+    world.poolFor(world.machineById(world.listMachines()[0]!.id)!)
+    assert.equal(world.poolCount, 1)
+
+    // Re-typing a new server in the settings form is a throwaway: probing it
+    // must not accumulate a pooled connection or pin the draft's secret.
+    const draft = world.ephemeralRefForTest({ host: 'h9', port: 22, username: 'u', password: 'guess' })
+    assert.equal(draft.pool.targetInfo.password, 'guess')
+    assert.equal(world.poolCount, 1)
+    draft.release()
+    assert.equal(world.poolCount, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('removing a machine drops its pooled connection', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const saved = world.upsertMachine({ name: 'a', host: 'h7', port: 22, username: 'u', password: 'pw' })
+    world.poolFor(world.machineById(saved.id)!)
+    assert.equal(world.poolCount, 1)
+    assert.equal(world.removeMachine(saved.id), true)
+    assert.equal(world.machineById(saved.id), null)
+    assert.equal(world.poolCount, 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

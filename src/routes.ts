@@ -9,6 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { RemoteWorld } from './world.ts'
+import type { SshPool } from './pool.ts'
 import type { MachineRef } from './world.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
@@ -31,6 +32,11 @@ function publicMachine(m: Machine): Record<string, unknown> {
     hasPassphrase: m.passphrase.length > 0,
     hostKeyMode: m.hostKeyMode,
     proxyHost: m.proxy?.host ?? '',
+    // The jump host's port and user are not secrets, and the edit form writes
+    // them straight back: withholding them here would make every save of an
+    // untouched machine silently reset its jump host to port 22 with no user.
+    proxyPort: m.proxy?.port ?? 22,
+    proxyUser: m.proxy?.username ?? '',
     workspace: m.workspace,
     color: m.color,
   }
@@ -189,6 +195,11 @@ export function anchorStatusRows(world: RemoteWorld): AnchorStatusRow[] {
  */
 export function machineFromBody(body: Record<string, unknown>): MachineInput {
   return {
+    // The record being replaced. Carried through so an edit that changes the
+    // address still updates that machine instead of appending a second one:
+    // the id spells the identity triple, so the body's own host no longer
+    // matches it.
+    ...(typeof body.id === 'string' && body.id.trim() ? { id: body.id.trim() } : {}),
     name: String(body.name ?? ''),
     host: String(body.host ?? ''),
     port: Number(body.port ?? 22),
@@ -205,7 +216,9 @@ export function machineFromBody(body: Record<string, unknown>): MachineInput {
           proxy: {
             host: String(body.proxyHost),
             port: Number(body.proxyPort ?? 22),
-            username: String(body.proxyUsername ?? ''),
+            // The client form names this field `proxyUser`; accept `proxyUsername`
+            // as well so either spelling of the same value reaches the record.
+            username: String(body.proxyUser ?? body.proxyUsername ?? ''),
             ...(body.proxyPassword === undefined ? {} : { password: String(body.proxyPassword) }),
             privateKeyPath: '',
             passphrase: '',
@@ -275,23 +288,30 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         const body = await readJsonBody(req)
         if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
         const id = machineIdOf(body)
-        let ref: MachineRef
+        // A draft probe runs on a pool of its own that closes the moment the
+        // probe settles, so repeatedly retyping a machine neither disturbs a
+        // saved machine's connection nor accumulates sockets.
+        let pool: SshPool
+        let release: (() => void) | null = null
         if (id) {
           const saved = world.machineById(id)
           if (!saved) return sendJson(res, 400, { ok: false, error: `no saved machine matches machineId "${id}"` })
-          ref = saved
+          pool = world.poolFor(saved)
         } else if (String(body.host ?? '').trim()) {
           // Unsaved draft: test the fields as given, saving nothing.
-          ref = world.ephemeralRef(machineFromBody(body))
+          const probe = world.ephemeralRefForTest(machineFromBody(body))
+          pool = probe.pool
+          release = probe.release
         } else {
           return sendJson(res, 400, { ok: false, error: 'machineId is required' })
         }
         try {
-          const pool = world.poolFor(ref)
           await pool.exec('echo dsh-remote-development-ok', { timeoutMs: Math.min(world.config.connectTimeoutMs + world.config.commandTimeoutMs, 30000) })
           return sendJson(res, 200, { ok: true, platform: pool.platformInfo })
         } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        } finally {
+          release?.()
         }
       },
     },
