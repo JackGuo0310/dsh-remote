@@ -30,6 +30,7 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
   - [Third-party code](#third-party-code)
+  - [License and attribution](#license)
 
 -----
 
@@ -74,8 +75,6 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote
 
 A `link:` install points the profile at the checkout directory, so later `pnpm run build` runs apply on the next harness restart without re-adding.
 
-Restart the harness after installing.
-
 <a id="compatibility"></a>
 ## Compatibility
 
@@ -86,7 +85,7 @@ dsh changed the shell seam in 0.1.7-alpha.1 with two breaking changes and no com
 
 The host checks every `@deepseek-ai/dsh*` peer before loading a plugin and refuses an unsatisfied range, naming the offending packages. `@deepseek-ai/cordis` is not among the packages it checks.
 
-A mismatched pair is not caught automatically. Its symptoms: with an older plugin on a newer host, startup throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`); with a newer plugin on an older host, startup fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) and commands throw `ctx.shell.run is not a function`.
+An npm install refuses a mismatched pair before the plugin ever loads and names the unsatisfied packages. A `github:` or `link:` install has no such check, and its symptoms are: with an older plugin on a newer host, startup throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`); with a newer plugin on an older host, startup fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) and commands throw `ctx.shell.run is not a function`.
 
 When the host publishes the next alpha generation, the peer range needs updating with it (semver's prerelease rules will not admit a new alpha on their own).
 
@@ -138,7 +137,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 | `hostKeyMode` | `accept-new` | `accept-new`, `verify`, or `off`. |
 | `remoteRipgrep` | `rg` | Remote binary the packaged ripgrep is rewritten to. |
 | `anchorRoot` | `$DSH_HOME/remote-workspaces` | Root directory for anchor directories. |
-| `auditLog` | off | Append-only JSONL audit of remote executions. |
+| `auditLog` | **on** | Append-only audit of every remote execution, one `timestamp \| user@host:port \| command \| exit` line each. |
 
 -----
 
@@ -154,7 +153,6 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **Path aliasing depends on display structure.** The remote-path rewrite targets the tree root header's span shape and the hover card's portal shape, both undeclared; a dsh change to either silently leaves the local anchor path visible (purely presentational — navigation, addressing, and the copy action are untouched and still use the real local directory).
 - **Search needs a remote ripgrep.** The `rg` binary must exist on the remote machine (configurable via `remoteRipgrep`); otherwise search tools fail on remote paths.
 - **SSH runs on pure JS, not native crypto.** The bundled `ssh2` never loads its optional native accelerators, so throughput on large SFTP transfers is lower than a natively-built `ssh2` would give.
-- **Not published to npm.** Install from GitHub or a local checkout — see [Install](#install).
 - **The built-in directory-picker flow is shadowed, not replaced.** Both directory-flow registrations coexist at distinct priorities (this plugin uses -1, lowest renders); unloading this plugin hands the slot back to the built-in picker.
 - **The 本机 (local) tab follows the host's composed picker capability.** The host resolves its directory-picker backend once at boot: a WSL without zenity/kdialog, an SSH launch, a non-loopback bind, or a display-less Linux all compose the `browse` backend (only the `list`/`createDirectory` primitives — no OS chooser). The local tab branches on that resolution — `native` opens the OS chooser, `browse` drives the host's in-app web browser instead; before this, the tab hard-coded `pick`, which fails with `directory-picker/unavailable` on such boots.
 - **Deleting a machine strands its workspaces on purpose.** Anchors survive machine deletion, and every tool surface refuses them with the same "no longer configured" error (fs, bash, subprocess, and the prompt's cwd variable falls back to the local handle) rather than executing on another machine or locally.
@@ -178,3 +176,12 @@ Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm ru
 `lib/index.js` contains bundled copies of `ssh2` (MIT), `asn1` (MIT), `safer-buffer` (MIT), `tweetnacl` (Unlicense), and `bcrypt-pbkdf` (BSD-3-Clause). Their license texts are reproduced in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Bundling moves security updates onto this repository: an `ssh2` advisory no longer reaches users through their own `pnpm update`. Patching it means `pnpm update ssh2 && pnpm run build`, then committing the result here.
+
+<a id="license"></a>
+### License and attribution
+
+MIT — see [LICENSE](LICENSE).
+
+Copyright (c) 2026 CJYLZS, the original author of this plugin. The npm package `@jackguo0310/dsh-remote` is a fork of the original `dsh-remote-development` project; the original work remains the work of its author under the same MIT terms.
+
+Changes made in this fork are described in the repository history, with each commit naming the tool that produced it.

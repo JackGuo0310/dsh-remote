@@ -30,6 +30,7 @@
 - [已知限制与延期工作](#已知限制与延期工作)
 - [开发说明](#开发说明)
   - [第三方代码](#第三方代码)
+  - [许可证与致谢](#许可证与致谢)
 
 -----
 
@@ -74,8 +75,6 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote
 
 `link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
 
-安装后重启 harness。
-
 <a id="兼容性"></a>
 ## 兼容性
 
@@ -86,7 +85,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 
 宿主在加载插件前会校验每个 `@deepseek-ai/dsh*` peer，范围不满足即拒绝，并列出不满足的包名。`@deepseek-ai/cordis` 不在宿主校验的包之列。
 
-版本不匹配的其他典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
+npm 安装会在插件加载前就拒绝版本不匹配的组合，并列出不满足的包。`github:` 与 `link:` 安装没有这道检查，其他典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
 
 宿主发布新一代 alpha 时，peer 范围需要相应更新（semver 的 prerelease 规则不会自动放行新的 alpha）。
 
@@ -138,7 +137,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 | `hostKeyMode` | `accept-new` | `accept-new`、`verify` 或 `off`。 |
 | `remoteRipgrep` | `rg` | 打包 ripgrep 改写到的远程二进制。 |
 | `anchorRoot` | `$DSH_HOME/remote-workspaces` | 锚点目录的根目录。 |
-| `auditLog` | 关闭 | 远程执行的追加式 JSONL 审计。 |
+| `auditLog` | **开启** | 每次远程执行的追加式审计，每行 `时间戳 \| 用户@主机:端口 \| 命令 \| 退出码`。 |
 
 -----
 
@@ -154,7 +153,6 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 - **路径别名依赖展示结构。** 远程路径改写针对树根头部的 span 形状与 hover 卡片的 portal 形状，两者都未声明；dsh 若更改任一形状，本地锚点路径会静默恢复显示（纯展示层——导航、寻址与复制操作不受影响，仍使用真实的本地目录）。
 - **SSH 走纯 JS 而非原生加密。** 打包的 `ssh2` 不会加载可选原生加速件，大文件 SFTP 传输的吞吐低于原生构建版本。
 - **搜索依赖远程 ripgrep。** 远程机器上必须存在 `rg` 二进制（可用 `remoteRipgrep` 配置）；否则搜索工具在远程路径上失败。
-- **不发布 npm。** 从 GitHub 或本地检出安装，见[安装](#安装)。
 - **内建目录选择流是被覆盖而非替换。** 两个目录流注册以不同优先级共存（本插件使用 -1，最低者优先渲染）；卸载本插件后槽位交还给内建选择器。
 - **「本机」页签跟随宿主组合的 picker 能力。** 宿主在启动时解析一次目录选择器后端：WSL 缺少 zenity/kdialog、经 SSH 启动、绑定非回环地址或无显示会话的 Linux 都会组合出 `browse` 后端（只有 `list`/`createDirectory` 原语，没有 OS 选择器）。插件的「本机」页签据此分流——`native` 打开 OS 选择器，`browse` 改用宿主的网页目录浏览器；在此之前的版本「本机」页签硬编码 `pick`，在这类启动下会以 `directory-picker/unavailable` 失败。
 - **删除机器后其工作区被有意搁置。** 锚点在机器删除后仍然存在，所有工具面对它都会以同样的「机器已失配」错误拒绝（fs、bash、subprocess，提示词的 `cwd` 变量回退为本地句柄），而不是换一台机器或在本机执行。
@@ -178,3 +176,12 @@ rc.2 各包声明的 peer 必须全部出现在 `devDependencies` 里，而不�
 `lib/index.js` 内含 `ssh2`（MIT）、`asn1`（MIT）、`safer-buffer`（MIT）、`tweetnacl`（Unlicense）、`bcrypt-pbkdf`（BSD-3-Clause）的打包副本，许可证全文见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 打包把安全更新的责任移到了本仓库：`ssh2` 的安全公告不再经用户自己的 `pnpm update` 到达他们。修补方式是 `pnpm update ssh2 && pnpm run build`，然后把结果提交到这里。
+
+<a id="许可证与致谢"></a>
+### 许可证与致谢
+
+MIT，见 [LICENSE](LICENSE)。
+
+Copyright (c) 2026 CJYLZS，本插件原作者。npm 包 `@jackguo0310/dsh-remote` 是原 `dsh-remote-development` 项目的分支；原作及其作者仍适用同样的 MIT 条款。
+
+本分支的改动见仓库历史，每笔提交都标注了产出它的工具。
