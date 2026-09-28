@@ -182,6 +182,6 @@ Bundling moves security updates onto this repository: an `ssh2` advisory no long
 
 MIT — see [LICENSE](LICENSE).
 
-Copyright (c) 2026 CJYLZS, the original author of this plugin. The npm package `@jackguo0310/dsh-remote` is a fork of the original `dsh-remote-development` project; the original work remains the work of its author under the same MIT terms.
+Copyright (c) 2026 CJYLZS, the original author of this plugin. Copyright (c) 2026 JackGuo0310 for the fork maintenance and changes since. The npm package `@jackguo0310/dsh-remote` is a fork of the original `dsh-remote-development` project, and the original work remains the work of its author under the same MIT terms.
 
 Changes made in this fork are described in the repository history, with each commit naming the tool that produced it.

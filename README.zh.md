@@ -182,6 +182,6 @@ rc.2 各包声明的 peer 必须全部出现在 `devDependencies` 里，而不�
 
 MIT，见 [LICENSE](LICENSE)。
 
-Copyright (c) 2026 CJYLZS，本插件原作者。npm 包 `@jackguo0310/dsh-remote` 是原 `dsh-remote-development` 项目的分支；原作及其作者仍适用同样的 MIT 条款。
+Copyright (c) 2026 CJYLZS，本插件原作者。Copyright (c) 2026 JackGuo0310 为分支维护及其后的改动。npm 包 `@jackguo0310/dsh-remote` 是原 `dsh-remote-development` 项目的分支；原作及其作者仍适用同样的 MIT 条款。
 
 本分支的改动见仓库历史，每笔提交都标注了产出它的工具。
