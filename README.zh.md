@@ -47,13 +47,14 @@ dsh -V
 
 | 你的 dsh | 插件版本 | 安装命令 |
 | --- | --- | --- |
-| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web @jackguo0310/dsh-remote` |
+| ≥ 0.1.7-rc.1, < 0.3.0 | v0.3.x | `dsh plugin add --profile web @jackguo0310/dsh-remote` |
+| ≥ 0.1.7-rc.1, < 0.2.0 | v0.2.x | `dsh plugin add --profile web @jackguo0310/dsh-remote@0.3.0` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 npm 安装取的是 `latest` dist-tag，会跟随新版本发布。需要锁定具体版本时：
 
 ```sh
-dsh plugin add --profile web @jackguo0310/dsh-remote@0.2.3
+dsh plugin add --profile web @jackguo0310/dsh-remote@0.3.0
 ```
 
 npm 会在安装时就解析并校验插件的 peer 依赖，因此 dsh 版本不受支持会**当场报错并列出不满足的包**，而不是等到加载时才失败。
@@ -80,7 +81,8 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote
 
 dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保留兼容层：执行入口收敛为 `resolve()` + `execute()`（`run()`/`start()` 被删除），本地执行器的 Config 改为活配置访问器（`Volatile`，并新增 `pwshPath`）。因此插件与宿主按代对应：
 
-- **v0.2.x → dsh ≥ 0.1.7-rc.1**，`@deepseek-ai/dsh` 声明为 `peerDependencies: >=0.1.7-rc.1 <0.2.0`，各 `dsh-*` 包为 `>=0.1.7-alpha.1 <0.2.0`。v0.2.1 另对齐 rc.2 宿主 API。
+- **v0.3.x → dsh ≥ 0.1.7-rc.1, < 0.3.0**，`@deepseek-ai/dsh` 声明为 `peerDependencies: >=0.1.7-rc.1 <0.3.0`，各 `dsh-*` 包为 `>=0.1.7-alpha.1 <0.3.0`。v0.3.0 的构建已对齐 0.2.1-alpha.1 宿主 API（这次唯一的硬变化就是 peer 上界）。
+- **v0.2.x → dsh ≥ 0.1.7-rc.1, < 0.2.0**。
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x**（`run()`/`start()` seam）。
 
 宿主在加载插件前会校验每个 `@deepseek-ai/dsh*` peer，范围不满足即拒绝，并列出不满足的包名。`@deepseek-ai/cordis` 不在宿主校验的包之列。
@@ -162,9 +164,9 @@ npm 安装会在插件加载前就拒绝版本不匹配的组合，并列出不�
 <a id="开发说明"></a>
 ## 开发说明
 
-插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（各 `dsh-*` 包为 `>=0.1.7-alpha.1 <0.2.0`，`@deepseek-ai/dsh` 为 `>=0.1.7-rc.1 <0.2.0`，均由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
+插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（各 `dsh-*` 包为 `>=0.1.7-alpha.1 <0.3.0`，`@deepseek-ai/dsh` 为 `>=0.1.7-rc.1 <0.3.0`，均由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
 
-rc.2 各包声明的 peer 必须全部出现在 `devDependencies` 里，而不只是本源码直接 import 的那些。rc.2 把 `dsh-bash-local`、`dsh-util-values`、`dsh-scope` 等声明为钉同版本的 peer，漏掉时 pnpm 会解析到旧副本，TypeScript 看不到基类，报错便表现为 API 破坏（`SandboxBashExecutor.Config` 报不存在、`FsError` 报缺 `name`/`message`）而非缺 peer。
+0.2.x 各包声明的 peer 必须全部出现在 `devDependencies` 里，而不只是本源码直接 import 的那些。0.2.x 把 `dsh-bash-local`、`dsh-util-values`、`dsh-scope` 等声明为钉同版本的 peer，漏掉时 pnpm 会解析到旧副本，TypeScript 看不到基类，报错便表现为 API 破坏（`SandboxBashExecutor.Config` 报不存在、`FsError` 报缺 `name`/`message`）而非缺 peer。
 
 命令：`pnpm run build`（tsdown，双半）、`pnpm run typecheck`、`pnpm run test`（node:test 经 tsx；无需 SSH 服务器——连接池接受注入的 client 工厂，SFTP 表面使用假件）。
 

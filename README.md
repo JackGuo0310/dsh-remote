@@ -47,13 +47,14 @@ Then pick the plugin version from [Compatibility](#compatibility).
 
 | Your dsh | Plugin version | Install command |
 | --- | --- | --- |
-| ≥ 0.1.7-rc.1 | v0.2.x | `dsh plugin add --profile web @jackguo0310/dsh-remote` |
+| ≥ 0.1.7-rc.1, < 0.3.0 | v0.3.x | `dsh plugin add --profile web @jackguo0310/dsh-remote` |
+| ≥ 0.1.7-rc.1, < 0.2.0 | v0.2.x | `dsh plugin add --profile web @jackguo0310/dsh-remote@0.3.0` |
 | 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:jackguo0310/dsh-remote#v0.1.0` |
 
 The npm install takes the `latest` dist-tag, so it tracks new releases. Pin an exact version when you need one:
 
 ```sh
-dsh plugin add --profile web @jackguo0310/dsh-remote@0.2.3
+dsh plugin add --profile web @jackguo0310/dsh-remote@0.3.0
 ```
 
 npm resolves and checks the plugin's peer dependencies at install time, so a dsh version the plugin does not support fails immediately and names the unsatisfied packages, rather than failing later at load.
@@ -80,7 +81,8 @@ A `link:` install points the profile at the checkout directory, so later `pnpm r
 
 dsh changed the shell seam in 0.1.7-alpha.1 with two breaking changes and no compatibility layer: execution converged on `resolve()` + `execute()` (`run()`/`start()` were deleted), and the local executors' Config became live accessors (`Volatile`, plus a new `pwshPath`). Plugin and host therefore pair by generation:
 
-- **v0.2.x → dsh ≥ 0.1.7-rc.1**, declared as `peerDependencies: >=0.1.7-rc.1 <0.2.0` on `@deepseek-ai/dsh` and `>=0.1.7-alpha.1 <0.2.0` on each `dsh-*` package. v0.2.1 additionally targets the rc.2 host API.
+- **v0.3.x → dsh ≥ 0.1.7-rc.1, < 0.3.0**, declared as `peerDependencies: >=0.1.7-rc.1 <0.3.0` on `@deepseek-ai/dsh` and `>=0.1.7-alpha.1 <0.3.0` on each `dsh-*` package. v0.3.0 retargets the build to the 0.2.1-alpha.1 host API (the bounds were the only blocking change).
+- **v0.2.x → dsh ≥ 0.1.7-rc.1, < 0.2.0**.
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x** (the `run()`/`start()` seam).
 
 The host checks every `@deepseek-ai/dsh*` peer before loading a plugin and refuses an unsatisfied range, naming the offending packages. `@deepseek-ai/cordis` is not among the packages it checks.
@@ -162,9 +164,9 @@ Machines are managed in the settings section; the plugin itself takes config def
 <a id="dev-note"></a>
 ## Dev Note
 
-The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.2.0` on each `dsh-*` package, `>=0.1.7-rc.1 <0.2.0` on `@deepseek-ai/dsh`, all supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
+The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.3.0` on each `dsh-*` package, `>=0.1.7-rc.1 <0.3.0` on `@deepseek-ai/dsh`, all supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
 
-Every peer rc.2 names must be present in `devDependencies`, not only the ones this source imports. rc.2 packages declare `dsh-bash-local`, `dsh-util-values`, `dsh-scope`, and others as peers pinned to the same version; when one is missing, pnpm resolves a stale copy and TypeScript cannot see the base class, so the errors read as an API break (`SandboxBashExecutor.Config` reported as missing, `FsError` reported as lacking `name`/`message`) rather than a missing peer.
+Every peer name must be present in `devDependencies`, not only the ones this source imports. 0.2.x packages declare `dsh-bash-local`, `dsh-util-values`, `dsh-scope`, and others as peers pinned to the same version; when one is missing, pnpm resolves a stale copy and TypeScript cannot see the base class, so the errors read as an API break (`SandboxBashExecutor.Config` reported as missing, `FsError` reported as lacking `name`/`message`) rather than a missing peer.
 
 Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm run test` (node:test via tsx; no SSH server needed — the pool accepts an injected client factory and the SFTP surface is faked).
 

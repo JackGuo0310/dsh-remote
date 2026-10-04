@@ -20,23 +20,23 @@
 
 ## 决策
 
-### ADR-001: peerDependencies 上界封顶 0.2.0
+### ADR-001: peerDependencies 上界封顶 0.3.0
 
 - 状态：active
 - 决策人：user
 - 记录人：dsh
-- 日期（UTC+8）：2026-09-27
-- 理由：`@deepseek-ai/dsh` 与各 `dsh-*` 的 peer 固定为 `>=0.1.7-rc.1 <0.2.0`（低版本 `>=0.1.7-alpha.1 <0.2.0`）。0.x 阶段每次 minor 都可能是破坏性变更，上界是在如实声明「只对 0.1.x 负责」，不是保守。放宽到 `<1.0.0` 会让插件在未验证的 0.2.0 上谎报兼容；DSH 每次发 rc 都动 pre-stable API，0.2.0 大概率有破坏性变更，而宿主的 `pluginCompatibilityWarning` 明写「Running it may cause crashes or data loss」。边界应随发布新版本抬高，而不是提前放宽。rc.1 到 0.2.0-rc.1 全部兼容（按 `plugin-compatibility.ts` 的 `includePrerelease: true` 实算验证），rc.3 照常安装。
+- 日期（UTC+8）：2026-10-05
+- 理由：`@deepseek-ai/dsh` 与各 `dsh-*` 的 peer 固定为 `>=0.1.7-rc.1 <0.3.0`（其余 `>=0.1.7-alpha.1 <0.3.0`）。0.x 阶段每次 minor 都可能是破坏性变更，上界是在如实声明「只对 0.1.x/0.2.x 负责」，不是保守。0.2.1-alpha.1 的审计显示插件用到的宿主 API 与 rc.2 逐行相同（仅删除未用的 dsh-invariants），故按既定失效条件把上界从 `<0.2.0` 抬到 `<0.3.0`，并随 0.3.0 发布。cordis 行仍写 `^4.0.2`（不参与宿主 peer 校验）。
 - 附带事实：`@deepseek-ai/cordis` **不参与**宿主的 peer 校验——`evaluatePluginCompatibility` 只遍历 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 前缀。peer 里 cordis 那行只是文档，因此它写 `^4.0.2` 而 rc.2 各包声明 `~4.0.4` 的不一致不会导致安装失败。不要因此去「修正」它。
-- 失效条件：DSH 发布 0.2.0 时，抬高上界（如 `<0.3.0`）并发布插件新版本；抬高前需在 rc.2 参考源码上验证兼容性。
+- 失效条件：DSH 发布 0.3.0 时，抬高上界（如 `<0.4.0`）并发布插件新版本；抬高前需先在新版源码上审计兼容性。
 
-### ADR-002: DSH 包统一锁 0.1.7-rc.2
+### ADR-002: DSH 包统一锁 0.2.1-alpha.1
 
 - 状态：active
 - 决策人：dsh
 - 记录人：dsh
-- 日期（UTC+8）：2026-09-27
-- 理由：devDependencies 精确锁 `0.1.7-rc.2`（peerDependencies 保持范围）。rc.2 的包把 `dsh-bash-local`、`dsh-util-values`、`dsh-scope` 等声明为 peer 且精确钉 `0.1.7-rc.2`；漏列这些 peer 时 pnpm 会装到旧版，TypeScript 解析不到基类，症状伪装成 API 破坏（`SandboxBashExecutor.Config` 报不存在、`FsError` 报缺 `name`/`message`）。补齐 peer 是修好 typecheck 的关键一步。
+- 日期（UTC+8）：2026-10-05
+- 理由：devDependencies 精确锁 `0.2.1-alpha.1`（peerDependencies 保持范围）。rc.2 的包把 `dsh-bash-local`、`dsh-util-values`、`dsh-scope` 等声明为 peer 且精确钉同版本；漏列这些 peer 时 pnpm 会装到旧版，TypeScript 解析不到基类，症状伪装成 API 破坏。0.2.1-alpha.1 移除了 `dsh-invariants`，对应 devDependency 一并删除。
 - 失效条件：升级 DSH 宿主版本时，同步更新 devDependencies 全部 `dsh-*`、补齐新增 peer，并重跑 `pnpm install` + `pnpm run typecheck`。
 
 ### ADR-003: 双轨发布——npm 为新版首选，Git tag 保留
