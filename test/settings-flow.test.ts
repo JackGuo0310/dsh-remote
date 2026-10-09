@@ -11,7 +11,7 @@ import { strict as assert } from 'node:assert'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -597,6 +597,59 @@ test('an unusable 本机 picker preference is refused rather than stored', async
     const bad = await post(`${url}/preferences`, { localPicker: 'whatever' })
     assert.equal(bad.ok, false)
     assert.equal(world.localPicker(), 'browse')
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('本机 browsing answers from the plugin routes while the host serves native', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-local-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' })
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world, 'native')
+  try {
+    mkdirSync(path.join(root, 'project'))
+    writeFileSync(path.join(root, 'notes.md'), 'x')
+
+    // The host refuses `directoryPicker/list` outright while it serves "native"
+    // (directory-picker/unavailable), so this browsing must never go through the
+    // host seam. Answering it from the plugin's own route is what makes the
+    // dialog usable to a browser reaching DSH through a tunnel.
+    const listed = await post(`${url}/local/dir`, { path: root })
+    assert.equal(listed.ok, true)
+    const listing = listed.listing as { path: string; entries: { name: string; path: string }[] }
+    assert.equal(listing.path, path.resolve(root))
+    assert.deepEqual(listing.entries.map((e) => e.name), ['project'])
+    // A file is not navigable, so it never becomes a row.
+    assert.equal(listing.entries.some((e) => e.name === 'notes.md'), false)
+
+    const created = await post(`${url}/local/mkdir`, { path: path.join(root, 'project'), name: 'dist' })
+    assert.equal(created.ok, true)
+    assert.equal(created.path, path.join(root, 'project', 'dist'))
+    assert.equal(existsSync(path.join(root, 'project', 'dist')), true)
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a 本机 listing refusal carries the reason instead of failing the request', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-local2-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' })
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    // A relative path must never resolve against the host cwd; the dialog shows
+    // the reason next to the path box rather than reporting a dead request.
+    const relative = await post(`${url}/local/dir`, { path: 'relative/dir' })
+    assert.equal(relative.ok, false)
+    assert.match(String(relative.error), /absolute path/)
+    // An absent path lists the home level, so the dialog boots on any machine.
+    const home = await fetch(`${url}/local/ls`)
+    assert.equal(((await home.json()) as Record<string, unknown>).ok, true)
   } finally {
     await close()
     world.dispose()

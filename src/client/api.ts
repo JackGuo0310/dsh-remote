@@ -168,3 +168,41 @@ export function getPreferences(): Promise<{ localPicker: LocalPickerMode }> {
 export function setPreferences(localPicker: LocalPickerMode): Promise<{ ok: true; localPicker: LocalPickerMode }> {
   return call('POST', '/preferences', { localPicker })
 }
+
+/** One listed 本机 directory row. */
+export interface LocalEntry {
+  name: string
+  path: string
+  hidden: boolean
+}
+
+/** One 本机 listing level. */
+export interface LocalListing {
+  path: string
+  home: string
+  crumbs: LocalEntry[]
+  entries: LocalEntry[]
+  truncated: boolean
+}
+
+/**
+ * List one 本机 directory level. The plugin answers from the host filesystem
+ * rather than through the host picker seam, which refuses browse verbs while
+ * the mounted backend is native.
+ * @param path - absolute directory; absent lists the home directory.
+ * @returns the level's listing, or the refusal reason.
+ */
+export async function listLocalDir(path?: string): Promise<{ ok: true; listing: LocalListing } | { ok: false; error: string }> {
+  if (path === undefined) return await call('GET', '/local/ls')
+  return await call('POST', '/local/dir', { path })
+}
+
+/**
+ * Create one child directory under an existing 本机 parent.
+ * @param path - absolute existing parent directory.
+ * @param name - single non-blank path segment.
+ * @returns the created path, or the refusal reason.
+ */
+export function createLocalDir(path: string, name: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  return call('POST', '/local/mkdir', { path, name })
+}

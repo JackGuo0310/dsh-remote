@@ -67,8 +67,8 @@ export function apply(ctx: ClientContext): void {
 
   const flowInjected = (): ({
     pickLocal: () => Promise<string | null>
-    listLocalDir: (path?: string) => Promise<{ path: string; home: string; crumbs: { name: string; path: string; hidden: boolean }[]; entries: { name: string; path: string; hidden: boolean }[]; truncated: boolean }>
-    createLocalDir: (path: string, name: string) => Promise<string>
+    listLocalDir: typeof api.listLocalDir
+    createLocalDir: typeof api.createLocalDir
     pickerKind: () => Promise<{ kind: api.PickerKind }>
     listMachines: typeof api.listMachines
     listRemoteDir: typeof api.listRemoteDir
@@ -78,10 +78,12 @@ export function apply(ctx: ClientContext): void {
     t: typeof t
   }) => ({
     pickLocal: () => ctx.uiWorkspace.pickDirectory(),
-    // 本机 browse interaction: the host's own listing/creation primitives —
-    // the verbs a WSL/SSH/headless boot's composed picker actually serves.
-    listLocalDir: (path) => ctx.uiWorkspace.listDirectory(path),
-    createLocalDir: (path, name) => ctx.uiWorkspace.createDirectory(path, name),
+    // 本机 browse interaction: the plugin's own routes over the host
+    // filesystem. The host's `directoryPicker` seam gates browse verbs on the
+    // mounted backend's kind, and the host mounts `native` for a loopback bind
+    // reached through a tunnel — exactly the browser that needs browsing most.
+    listLocalDir: api.listLocalDir,
+    createLocalDir: api.createLocalDir,
     pickerKind: api.pickerCapability,
     listMachines: api.listMachines,
     listRemoteDir: api.listRemoteDir,

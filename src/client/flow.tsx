@@ -11,24 +11,8 @@ import type { ReactElement } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DirectoryFlowOwnerProps } from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type { ClientMachine, PickerKind, RemoteEntry } from './api.ts'
+import type { ClientMachine, LocalEntry, LocalListing, PickerKind, RemoteEntry } from './api.ts'
 import * as api from './api.ts'
-
-/** One local directory row as the host browse primitives report it. */
-interface LocalEntry {
-  name: string
-  path: string
-  hidden: boolean
-}
-
-/** One local listing level: structural face of the host's DirectoryListing. */
-interface LocalListing {
-  path: string
-  home: string
-  crumbs: LocalEntry[]
-  entries: LocalEntry[]
-  truncated: boolean
-}
 
 /**
  * The composed picker interaction, probed once per page: the host resolves
@@ -39,10 +23,10 @@ let cachedPickerKind: 'native' | 'browse' | null = null
 /** Injected face bound in the plugin's apply closure. */
 export interface FlowInjected {
   pickLocal: () => Promise<string | null>
-  /** List one local directory level (absent path = the host home). */
-  listLocalDir: (path?: string) => Promise<LocalListing>
-  /** Create one child directory under an existing local parent. */
-  createLocalDir: (path: string, name: string) => Promise<string>
+  /** List one 本机 directory level (absent path = the host home). */
+  listLocalDir: (path?: string) => Promise<{ ok: true; listing: LocalListing } | { ok: false; error: string }>
+  /** Create one child directory under an existing 本机 parent. */
+  createLocalDir: (path: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>
   /** Which interaction the host's composed directory picker serves. */
   pickerKind: () => Promise<{ kind: PickerKind }>
   listMachines: typeof api.listMachines
@@ -137,9 +121,13 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
     setError('')
     void props.listLocalDir(target).then((r) => {
       setLocalLoading(false)
-      setLocalPath(r.path)
-      setLocalCrumbs(r.crumbs)
-      setLocalEntries(r.entries)
+      if (!r.ok) {
+        setError(r.error)
+        return
+      }
+      setLocalPath(r.listing.path)
+      setLocalCrumbs(r.listing.crumbs)
+      setLocalEntries(r.listing.entries)
     }).catch((err: Error) => {
       setLocalLoading(false)
       setError(err.message)
@@ -226,10 +214,14 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
   }
 
   const localMkdir = (): void => {
-    void props.createLocalDir(localPath, localMkdirName.trim()).then((created) => {
+    void props.createLocalDir(localPath, localMkdirName.trim()).then((r) => {
+      if (!r.ok) {
+        setError(r.error)
+        return
+      }
       setLocalMkdirOpen(false)
       setLocalMkdirName('')
-      loadLocalDir(created)
+      loadLocalDir(r.path)
     }).catch((err: Error) => setError(err.message))
   }
 

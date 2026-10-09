@@ -12,6 +12,7 @@ import { RemoteWorld } from './world.ts'
 import type { SshPool } from './pool.ts'
 import type { MachineRef } from './world.ts'
 import { ensureRemoteDirs, listRemoteDir } from './remote-io.ts'
+import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
 
@@ -443,6 +444,49 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         // wins over that inference: browse works from any client, native does not.
         if (kind === 'native' && world.localPicker() === 'browse') kind = 'browse'
         return sendJson(res, 200, { kind })
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/local/ls`,
+      handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        // Answered from the host filesystem rather than through the host's
+        // `directoryPicker` seam: that seam refuses browse verbs whenever the
+        // mounted backend is `native`, which is what the host composes for a
+        // loopback bind reached through a tunnel.
+        try {
+          return sendJson(res, 200, { ok: true, listing: listLocalDir() })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/local/dir`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        try {
+          return sendJson(res, 200, { ok: true, listing: listLocalDir(String(body.path ?? '')) })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/local/mkdir`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        try {
+          return sendJson(res, 200, { ok: true, path: createLocalDir(String(body.path ?? ''), String(body.name ?? '')) })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
       },
     },
     {
