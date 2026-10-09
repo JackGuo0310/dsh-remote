@@ -155,3 +155,16 @@ export type PickerKind = 'native' | 'browse' | 'unknown'
 export function pickerCapability(): Promise<{ kind: PickerKind }> {
   return call('GET', '/picker')
 }
+
+/** The 本机 directory-picker interaction the operator selected. */
+export type LocalPickerMode = 'browse' | 'native'
+
+/** Read the saved settings-page preferences. */
+export function getPreferences(): Promise<{ localPicker: LocalPickerMode }> {
+  return call('GET', '/preferences')
+}
+
+/** Store the 本机 directory-picker interaction. */
+export function setPreferences(localPicker: LocalPickerMode): Promise<{ ok: true; localPicker: LocalPickerMode }> {
+  return call('POST', '/preferences', { localPicker })
+}

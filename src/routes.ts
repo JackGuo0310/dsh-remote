@@ -437,7 +437,29 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         } catch {
           // Seam present but not resolvable yet — same "unknown" answer.
         }
+        // The host resolves `native` from loopback bind plus a non-SSH launch,
+        // which a browser reaching the host through a tunnel satisfies while
+        // sitting on another machine. The operator's configured interaction
+        // wins over that inference: browse works from any client, native does not.
+        if (kind === 'native' && world.localPicker() === 'browse') kind = 'browse'
         return sendJson(res, 200, { kind })
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/preferences`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method === 'GET') {
+          return sendJson(res, 200, { localPicker: world.localPicker() })
+        }
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        try {
+          return sendJson(res, 200, { ok: true, localPicker: world.setLocalPicker(body.localPicker) })
+        } catch (err) {
+          return sendJson(res, 400, { ok: false, error: (err as Error).message })
+        }
       },
     },
     {

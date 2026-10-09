@@ -70,7 +70,7 @@ const FOLDER_ICON = createElement('span', { className: 'rdv-itemIcon', 'aria-hid
  * @returns the dialog element.
  */
 export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): ReactElement {
-  const { open, busy, onPicked, onCancel, onError, t } = props
+  const { open, busy, onPicked, onCancel, t } = props
   const [tab, setTab] = useState<Tab>('local')
   const [machines, setMachines] = useState<ClientMachine[]>([])
   const [machineId, setMachineId] = useState('')
@@ -175,11 +175,19 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
 
   if (!open) return createElement('div', { style: { display: 'contents' } })
 
+  // A failed OS chooser falls back to the in-app browser instead of raising the
+  // owner's error surface: the chooser opens on the host display, so a browser
+  // reaching the host from another machine never sees it and the call only ends
+  // when the connection times out. The browse interaction answers from the same
+  // host filesystem, so the operator keeps a usable picker.
   const chooseLocal = (): void => {
     void props.pickLocal().then((picked) => {
       if (picked) onPicked(picked)
-    }).catch((err: Error) => {
-      if (err.message) onError(err.message)
+    }).catch(() => {
+      cachedPickerKind = 'browse'
+      setLocalKind('browse')
+      setLocalBooted(false)
+      setError(t('picker.localFallback'))
     })
   }
 

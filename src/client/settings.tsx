@@ -13,7 +13,7 @@ import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the settings section owner-share declaration.
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ClientMachine, ProbeResult } from './api.ts'
+import type { ClientMachine, LocalPickerMode, ProbeResult } from './api.ts'
 
 /** Injected face bound in the plugin's apply closure. */
 export interface SettingsInjected {
@@ -21,6 +21,8 @@ export interface SettingsInjected {
   saveMachine: (machine: Record<string, unknown>) => Promise<{ machine: ClientMachine }>
   deleteMachine: (id: string) => Promise<{ ok: boolean }>
   testConnection: (machine: Record<string, unknown>) => Promise<ProbeResult>
+  getPreferences: () => Promise<{ localPicker: LocalPickerMode }>
+  setPreferences: (localPicker: LocalPickerMode) => Promise<{ ok: true; localPicker: LocalPickerMode }>
   /** Re-read the anchors and recolor the workspace tree's remote markers. */
   refreshTreeMark: () => Promise<void>
   t: Translate
@@ -103,6 +105,28 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const [probing, setProbing] = useState<string | null>(null)
   const [draftResult, setDraftResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [machineResults, setMachineResults] = useState<Record<string, { ok: boolean; text: string }>>({})
+  const [localPicker, setLocalPicker] = useState<LocalPickerMode>('browse')
+  const [pickerBusy, setPickerBusy] = useState(false)
+
+  useEffect(() => {
+    void props.getPreferences().then((p) => setLocalPicker(p.localPicker))
+      .catch((err: Error) => setError(err.message))
+  }, [props])
+
+  /** Store the picked interaction and re-read the page so the dialog follows it. */
+  const choosePicker = (mode: LocalPickerMode): void => {
+    if (mode === localPicker) return
+    setPickerBusy(true)
+    setError('')
+    void props.setPreferences(mode).then((p) => {
+      setLocalPicker(p.localPicker)
+      setPickerBusy(false)
+      setNotice(t('settings.pickerSaved'))
+    }).catch((err: Error) => {
+      setError(err.message)
+      setPickerBusy(false)
+    })
+  }
 
   // The palette belongs to one draft form; closing the form closes it too.
   useEffect(() => { if (draft === null) setPaletteOpen(false) }, [draft])
@@ -215,6 +239,22 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
 
   return createElement('div', { className: 'rdv-page' },
     createElement('p', { className: 'rdv-intro' }, t('settings.intro')),
+    createElement('div', { className: 'rdv-form' },
+      createElement('div', { className: 'rdv-field' },
+        createElement('span', { className: 'rdv-label' }, t('settings.localPicker')),
+        createElement('select', {
+          className: 'rdv-select',
+          value: localPicker,
+          disabled: pickerBusy,
+          'aria-label': t('settings.localPicker'),
+          onChange: (e: React.ChangeEvent<HTMLSelectElement>) => choosePicker(e.target.value as LocalPickerMode),
+        },
+          createElement('option', { value: 'browse' }, t('settings.localPickerBrowse')),
+          createElement('option', { value: 'native' }, t('settings.localPickerNative')),
+        ),
+        createElement('span', { className: 'rdv-hint' }, t('settings.localPickerHint')),
+      ),
+    ),
     draft === null && createElement('div', { className: 'rdv-actions', style: { justifyContent: 'flex-start', marginTop: 0 } },
       createElement(Button, {
         variant: 'primary',

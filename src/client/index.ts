@@ -58,6 +58,8 @@ export function apply(ctx: ClientContext): void {
       saveMachine: api.saveMachine,
       deleteMachine: api.deleteMachine,
       testConnection: api.testConnection,
+      getPreferences: api.getPreferences,
+      setPreferences: api.setPreferences,
       refreshTreeMark: () => refreshTreeMark(),
       t,
     }),

@@ -28,6 +28,7 @@ function baseConfig(anchorRoot: string): Config {
     auditLog: false,
     anchorRoot,
     remoteRipgrep: 'rg',
+    localPicker: 'browse',
   }
 }
 

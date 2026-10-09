@@ -19,7 +19,7 @@ import type { AnchorInfo, AnchorMeta } from './anchors.ts'
 import { loadRegistry, machineId, registryExists, saveRegistry, sanitizeMachine } from './registry.ts'
 import type { MachineInput } from './registry.ts'
 import type { Machine, RegistryData } from './registry.ts'
-import type { Config } from './config.ts'
+import type { Config, LocalPickerMode } from './config.ts'
 import { normalizeRemotePath } from './paths.ts'
 
 /** Harness home: `DSH_HOME` when set, else `~/.dsh`. */
@@ -100,6 +100,30 @@ export class RemoteWorld {
   /** All saved machines, plus the config default when no registry exists. */
   listMachines(): Machine[] {
     return [...this.registry.machines]
+  }
+
+  /**
+   * The 本机 directory-picker interaction the operator selected. The saved
+   * setting wins over the config default so the settings page, not the
+   * deployment file, decides how the dialog behaves.
+   * @returns the effective interaction.
+   */
+  localPicker(): LocalPickerMode {
+    return this.registry.localPicker ?? this.config.localPicker
+  }
+
+  /**
+   * Store the 本机 directory-picker interaction.
+   * @param mode - the selected interaction; anything else is refused.
+   * @returns the stored interaction.
+   */
+  setLocalPicker(mode: unknown): LocalPickerMode {
+    if (mode !== 'browse' && mode !== 'native') {
+      throw new Error(`localPicker must be "browse" or "native", got ${JSON.stringify(mode)}`)
+    }
+    this.registry.localPicker = mode
+    saveRegistry(this.registryFile, this.registry)
+    return mode
   }
 
   /**

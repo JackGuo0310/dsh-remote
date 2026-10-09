@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { ProxyConfig } from './config.ts'
+import type { LocalPickerMode, ProxyConfig } from './config.ts'
 
 /** One saved SSH machine. `id` is a stable opaque key (host-port-user derived). */
 export interface Machine {
@@ -34,6 +34,12 @@ export interface Machine {
 export interface RegistryData {
   version: 1
   machines: Machine[]
+  /**
+   * 本机 directory-picker interaction the settings page writes. Absent on
+   * registries written before the setting existed; the effective value falls
+   * back to the plugin config.
+   */
+  localPicker?: LocalPickerMode
 }
 
 const REGISTRY_VERSION = 1
@@ -118,7 +124,11 @@ export function loadRegistry(file: string): RegistryData {
     const machines = raw.machines.map((m) => sanitizeMachine(m as Partial<Machine>))
     // Registries written before the "current machine" concept was removed
     // carry a currentId field; it is obsolete and simply dropped on load.
-    return { version: REGISTRY_VERSION, machines }
+    const data: RegistryData = { version: REGISTRY_VERSION, machines }
+    if (raw.localPicker === 'browse' || raw.localPicker === 'native') {
+      data.localPicker = raw.localPicker
+    }
+    return data
   } catch {
     return { version: REGISTRY_VERSION, machines: [] }
   }

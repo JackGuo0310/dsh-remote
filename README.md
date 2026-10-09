@@ -138,6 +138,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 | `maxFileBytes` | 52428800 | Largest file read or written through SFTP. |
 | `hostKeyMode` | `accept-new` | `accept-new`, `verify`, or `off`. |
 | `remoteRipgrep` | `rg` | Remote binary the packaged ripgrep is rewritten to. |
+| `localPicker` | `browse` | Default interaction of the 本机 tab: `browse` (in-app web browser, works from any client) or `native` (OS chooser, only for an operator at the host's screen). A settings-page choice overrides this default. |
 | `anchorRoot` | `$DSH_HOME/remote-workspaces` | Root directory for anchor directories. |
 | `auditLog` | **on** | Append-only audit of every remote execution, one `timestamp \| user@host:port \| command \| exit` line each. |
 
@@ -156,7 +157,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **Search needs a remote ripgrep.** The `rg` binary must exist on the remote machine (configurable via `remoteRipgrep`); otherwise search tools fail on remote paths.
 - **SSH runs on pure JS, not native crypto.** The bundled `ssh2` never loads its optional native accelerators, so throughput on large SFTP transfers is lower than a natively-built `ssh2` would give.
 - **The built-in directory-picker flow is shadowed, not replaced.** Both directory-flow registrations coexist at distinct priorities (this plugin uses -1, lowest renders); unloading this plugin hands the slot back to the built-in picker.
-- **The 本机 (local) tab follows the host's composed picker capability.** The host resolves its directory-picker backend once at boot: a WSL without zenity/kdialog, an SSH launch, a non-loopback bind, or a display-less Linux all compose the `browse` backend (only the `list`/`createDirectory` primitives — no OS chooser). The local tab branches on that resolution — `native` opens the OS chooser, `browse` drives the host's in-app web browser instead; before this, the tab hard-coded `pick`, which fails with `directory-picker/unavailable` on such boots.
+- **The 本机 (local) tab browses in the web app by default; the settings page decides.** The host resolves its directory-picker backend once at boot and infers `native` from a loopback bind plus a non-SSH launch — both also hold for a browser reaching the host through a tunnel from another machine, but the OS chooser then opens on the **DSH host's screen**, where the remote operator cannot see it, so the request hangs until the tunnel times out. The local tab therefore serves the browse interaction by default; the settings page's "Local folder picker" explicitly switches to "Open the system chooser". Even with the system chooser selected, a failed call falls back to the in-app browser instead of raising an error.
 - **Deleting a machine strands its workspaces on purpose.** Anchors survive machine deletion, and every tool surface refuses them with the same "no longer configured" error (fs, bash, subprocess, and the prompt's cwd variable falls back to the local handle) rather than executing on another machine or locally.
 
 -----

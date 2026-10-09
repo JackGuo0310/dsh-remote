@@ -43,6 +43,7 @@ function baseConfig(anchorRoot: string): Config {
     auditLog: false,
     anchorRoot,
     remoteRipgrep: 'rg',
+    localPicker: 'browse',
   }
 }
 
@@ -203,11 +204,18 @@ function fakeSftp(listings: Map<string, Listing>, mkdirs: string[]) {
 }
 
 /** A live HTTP server with the plugin's routes mounted, plus its base URL. */
-async function serve(world: RemoteWorld): Promise<{ url: string; close: () => Promise<void> }> {
+async function serve(world: RemoteWorld, pickerKind?: 'native' | 'browse'): Promise<{ url: string; close: () => Promise<void> }> {
   const registered: { dispose: () => void }[] = []
   const server: Server = createServer()
   const ctx = new Context()
   ctx.effect(() => () => { for (const d of registered) d.dispose() })
+  // The host resolves its picker backend at boot; a loopback bind on win32 makes
+  // that `native`, which is exactly the shape a tunneled browser sees and cannot
+  // serve. Tests install it explicitly rather than depending on the host.
+  if (pickerKind !== undefined) {
+    ;(ctx as unknown as { provide(name: string, value: unknown): void })
+      .provide('directoryPicker', { capability: () => ({ kind: pickerKind }) })
+  }
   const webServer = {
     register(route: { path: string; kind: string; handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> }) {
       const onRequest = (req: IncomingMessage, res: ServerResponse): void => { void route.handler(req, res) }
@@ -540,4 +548,58 @@ test('a probe without a host or an id is refused', async () => {
     assert.equal(probe.ok, false)
     assert.match(String(probe.error), /machineId is required/)
   })
+})
+
+test('a host-resolved native picker is served as browse until the operator picks native', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-picker-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' })
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world, 'native')
+  try {
+    const get = async (p: string): Promise<Record<string, unknown>> => {
+      const res = await fetch(url + p)
+      return await res.json() as Record<string, unknown>
+    }
+
+    // The host inferred `native` from a loopback bind and a non-SSH launch, but
+    // the operator may be on another machine entirely. Following that
+    // inference opens a dialog on the host screen nobody is watching, so the
+    // dialog hangs until the tunnel times out — the default must not do that.
+    assert.equal((await get('/picker')).kind, 'browse')
+
+    // Explicitly choosing the system chooser restores it...
+    assert.deepEqual(await post(`${url}/preferences`, { localPicker: 'native' }), { ok: true, localPicker: 'native' })
+    assert.equal((await get('/picker')).kind, 'native')
+    // ...and it survives a restart, because the settings page is where the
+    // operator made the choice.
+    world.dispose()
+    const reloaded = new RemoteWorld(baseConfig(root))
+    assert.equal(reloaded.localPicker(), 'native')
+    reloaded.dispose()
+
+    assert.deepEqual(await post(`${url}/preferences`, { localPicker: 'browse' }), { ok: true, localPicker: 'browse' })
+    assert.equal((await get('/picker')).kind, 'browse')
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an unusable 本机 picker preference is refused rather than stored', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-picker2-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' })
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    // Without this guard a bad value would ride into the registry file and every
+    // later read of it, failing where the operator can no longer see the cause.
+    const bad = await post(`${url}/preferences`, { localPicker: 'whatever' })
+    assert.equal(bad.ok, false)
+    assert.equal(world.localPicker(), 'browse')
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
 })

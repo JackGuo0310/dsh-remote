@@ -17,6 +17,15 @@ export interface ProxyConfig {
   passphrase: string
 }
 
+/**
+ * Interaction the 本机 tab of the workspace dialog uses. `browse` lists one
+ * directory level in the browser and works from any client; `native` drives an
+ * OS chooser on the host display and therefore only serves an operator sitting
+ * at that display — a browser reaching the host through a tunnel waits forever
+ * for a dialog nobody can see.
+ */
+export type LocalPickerMode = 'browse' | 'native'
+
 /** Validated plugin configuration (schemastery applied the defaults). */
 export interface ResolvedConfig {
   host: string
@@ -37,6 +46,7 @@ export interface ResolvedConfig {
   auditLog: boolean
   anchorRoot: string
   remoteRipgrep: string
+  localPicker: LocalPickerMode
 }
 
 export const Config = z.object({
@@ -83,6 +93,12 @@ export const Config = z.object({
   anchorRoot: z.string().default(''),
   /** ripgrep command name on the remote host for the grep/glob tools. */
   remoteRipgrep: z.string().default('rg'),
+  /**
+   * 本机 directory-picker interaction. `browse` (default) works from any
+   * browser; `native` opens an OS chooser on the host display and only suits an
+   * operator sitting at that display.
+   */
+  localPicker: z.union(['browse', 'native'] as const).default('browse'),
 })
 
 export type Config = ResolvedConfig
