@@ -11,6 +11,7 @@
  * @module dsh-remote-development/local-browse
  */
 
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { homedir, platform as osPlatform } from 'node:os'
@@ -46,6 +47,8 @@ export interface LocalListing {
   entries: LocalEntry[]
   /** The level was cut because it held more rows than the dialog renders. */
   truncated: boolean
+  /** Every root the operator may switch to (Windows volumes; the single POSIX root elsewhere). */
+  roots: string[]
 }
 
 /** Rows one listing may hold before it is cut; the dialog scrolls, so this only bounds the payload. */
@@ -112,7 +115,7 @@ export function listLocalDir(target?: string): LocalListing {
     return byName !== 0 ? byName : a.name.localeCompare(b.name)
   })
 
-  return { path: dir, home: path.resolve(homedir()), crumbs: crumbsOf(dir), entries, truncated }
+  return { path: dir, home: path.resolve(homedir()), crumbs: crumbsOf(dir), entries, truncated, roots: listDriveRoots() }
 }
 
 /**
@@ -160,4 +163,60 @@ export function createLocalDir(parent: string, name: string): string {
     throw new LocalBrowseError('directory-create-failed', created, `cannot create ${created}: ${(err as Error).message}`)
   }
   return created
+}
+
+/** How long an enumerated drive list stays valid; a volume set rarely changes mid-session. */
+const DRIVE_CACHE_MS = 60_000
+
+let cachedDrives: { at: number; paths: string[] } | undefined
+
+/**
+ * Every root the operator can browse to, so a Windows host can switch from `C:\`
+ * to `D:\` without typing the path. Node exposes no volume enumeration, so on
+ * Windows this asks PowerShell once and caches the answer; elsewhere the single
+ * filesystem root is the only answer there is.
+ *
+ * The list is advisory, not a fence: a root that vanished or is inaccessible
+ * still resolves through {@link listLocalDir} and reports why.
+ * @returns the browsable roots.
+ */
+export function listDriveRoots(): string[] {
+  if (osPlatform() !== 'win32') return [path.parse(path.resolve(homedir())).root]
+  const now = Date.now()
+  if (cachedDrives !== undefined && now - cachedDrives.at < DRIVE_CACHE_MS) return cachedDrives.paths
+  const paths = enumerateWindowsDrives()
+  cachedDrives = { at: now, paths }
+  return paths
+}
+
+/**
+ * Ask PowerShell for the mounted volumes. A failure (no PowerShell, a locked
+ * profile, a timeout) must not break the picker, so the system drive from the
+ * environment stands in — that volume exists whenever the host is running.
+ * @returns the volume roots, in mount order.
+ */
+function enumerateWindowsDrives(): string[] {
+  try {
+    const script = 'Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Root }'
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', timeout: 3000, windowsHide: true },
+    )
+    const roots = out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^[A-Za-z]:\\$/.test(line))
+    if (roots.length === 0) return [systemDriveRoot()]
+    return roots
+  } catch {
+    // PowerShell is absent or refused; the system drive is still browsable.
+    return [systemDriveRoot()]
+  }
+}
+
+/**
+ * The root of the volume the host process itself runs from.
+ * @returns the system drive root, e.g. `C:\`.
+ */
+function systemDriveRoot(): string {
+  const drive = process.env.SystemDrive
+  return drive !== undefined && /^[A-Za-z]:$/.test(drive) ? `${drive}\\` : 'C:\\'
 }

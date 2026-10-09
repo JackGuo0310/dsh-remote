@@ -72,6 +72,10 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
   const [localPath, setLocalPath] = useState('')
   const [localCrumbs, setLocalCrumbs] = useState<LocalEntry[]>([])
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>([])
+  // Every root the host offers (Windows volumes, or the single POSIX root). The
+  // dialog offers a selector only when there is more than one, so a POSIX host
+  // keeps the same three buttons it always had.
+  const [localRoots, setLocalRoots] = useState<string[]>([])
   const [localLoading, setLocalLoading] = useState(false)
   const [localBooted, setLocalBooted] = useState(false)
   const [localMkdirOpen, setLocalMkdirOpen] = useState(false)
@@ -128,6 +132,7 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
       setLocalPath(r.listing.path)
       setLocalCrumbs(r.listing.crumbs)
       setLocalEntries(r.listing.entries)
+      setLocalRoots(r.listing.roots)
     }).catch((err: Error) => {
       setLocalLoading(false)
       setError(err.message)
@@ -268,6 +273,16 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
                   'aria-label': t('picker.path'),
                 }),
                 createElement(Button, { size: 'sm', onClick: () => loadLocalDir() }, t('picker.home')),
+                localRoots.length > 1 && createElement('select', {
+                  className: 'rdv-select',
+                  value: localRoots.find((root) => localPath.startsWith(root)) ?? localRoots[0] ?? '',
+                  disabled: localLoading,
+                  'aria-label': t('picker.drive'),
+                  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => loadLocalDir(e.target.value),
+                },
+                  localRoots.map((root) => createElement('option', { key: root, value: root },
+                    root.length === 3 ? root.slice(0, 2) : root)),
+                ),
                 localCrumbs.length >= 2 && createElement(Button, { size: 'sm', onClick: upLocal }, t('picker.up')),
                 createElement(Button, { size: 'sm', onClick: () => loadLocalDir(localPath) }, t('picker.refresh')),
               ),

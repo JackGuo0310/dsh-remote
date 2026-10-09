@@ -183,6 +183,8 @@ export interface LocalListing {
   crumbs: LocalEntry[]
   entries: LocalEntry[]
   truncated: boolean
+  /** Every root the dialog may switch to (Windows volumes; the single POSIX root elsewhere). */
+  roots: string[]
 }
 
 /**

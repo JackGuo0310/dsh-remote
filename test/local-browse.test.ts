@@ -11,7 +11,7 @@ import { strict as assert } from 'node:assert'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import path from 'node:path'
-import { createLocalDir, listLocalDir, LocalBrowseError } from '../src/local-browse.ts'
+import { createLocalDir, listDriveRoots, listLocalDir, LocalBrowseError } from '../src/local-browse.ts'
 
 function tempDir(): string {
   return mkdtempSync(path.join(tmpdir(), 'rdv-local-'))
@@ -118,6 +118,20 @@ test('a folder name that is not one path segment is refused', () => {
         `refuses ${JSON.stringify(name)}`,
       )
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('every listing offers the browsable roots, and there is always at least one', () => {
+  const root = tempDir()
+  try {
+    const roots = listLocalDir(root).roots
+    assert.ok(roots.length >= 1, 'the dialog needs somewhere to switch to')
+    // Every offered root is absolute, which is what makes it a valid listing
+    // target rather than a path resolved against the host cwd.
+    for (const r of roots) assert.ok(path.isAbsolute(r), `${r} is absolute`)
+    assert.deepEqual(roots, listDriveRoots(), 'the roots are stable across listings')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
