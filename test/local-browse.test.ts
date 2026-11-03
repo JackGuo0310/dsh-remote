@@ -8,7 +8,7 @@
 
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import path from 'node:path'
 import { createLocalDir, listDriveRoots, listLocalDir, LocalBrowseError } from '../src/local-browse.ts'
@@ -37,6 +37,47 @@ test('listing returns directories with their joined paths and the breadcrumb anc
     assert.deepEqual(listing.crumbs.map((c) => c.path), listing.crumbs.map((_, i) => i === 0
       ? path.parse(root).root
       : path.join(path.parse(root).root, ...listing.crumbs.slice(1, i + 1).map((c) => c.name))))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a directory reached through a reparse point is listed', (t) => {
+  // Windows reports a junction or an OneDrive folder as a link rather than a
+  // directory, so a listing filtered on `isDirectory()` would drop the one row
+  // the operator needs in order to pick it as a workspace.
+  const root = tempDir()
+  try {
+    mkdirSync(path.join(root, 'real'))
+    const linked = path.join(root, 'linked')
+    try {
+      // A junction needs no elevation on Windows; POSIX has no junction type.
+      symlinkSync(path.join(root, 'real'), linked, process.platform === 'win32' ? 'junction' : 'dir')
+    } catch {
+      t.skip('this host cannot create a directory link')
+      return
+    }
+    const listing = listLocalDir(root)
+    assert.deepEqual(listing.entries.map((e) => e.name), ['linked', 'real'])
+    // The row points at the link, which is the path the operator picked.
+    assert.equal(listing.entries[0]!.path, linked)
+    // The linked directory is itself browsable.
+    assert.ok(listLocalDir(linked).path === path.resolve(linked))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a dangling link is not offered as a directory', (t) => {
+  const root = tempDir()
+  try {
+    try {
+      symlinkSync(path.join(root, 'missing-target'), path.join(root, 'dangling'), process.platform === 'win32' ? 'junction' : 'dir')
+    } catch {
+      t.skip('this host cannot create a directory link')
+      return
+    }
+    assert.deepEqual(listLocalDir(root).entries, [])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

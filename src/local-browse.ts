@@ -13,6 +13,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import path from 'node:path'
 import { homedir, platform as osPlatform } from 'node:os'
 
@@ -77,6 +78,32 @@ function requireAbsolute(target: string): string {
 }
 
 /**
+ * Whether one `readdir` entry is a directory the dialog may open.
+ *
+ * `readdir` describes the entry itself, so on Windows a reparse point — a
+ * junction, or an OneDrive folder whose content lives in the cloud — reports
+ * `isSymbolicLink()` rather than `isDirectory()` even though it resolves to a
+ * directory. Filtering on `isDirectory()` alone hides `D:\OneDrive` from the
+ * picker, which leaves the operator unable to choose it as a workspace.
+ * `stat` follows the reparse point, and reading a cloud placeholder's metadata
+ * does not download its content.
+ * @param target - absolute path of the entry.
+ * @param dirent - the entry as `readdir` reported it.
+ * @returns whether the entry is a directory that can be browsed into.
+ */
+function isBrowsableDir(target: string, dirent: Dirent): boolean {
+  if (dirent.isDirectory()) return true
+  // A plain file is never a row; only a link can still resolve to a directory.
+  if (!dirent.isSymbolicLink()) return false
+  try {
+    return statSync(target).isDirectory()
+  } catch {
+    // A dangling link, or one the host cannot stat, is not a level to open.
+    return false
+  }
+}
+
+/**
  * List one directory level with its breadcrumb ancestry.
  * @param target - absolute directory to list; absent lists the home directory.
  * @returns the level's listing.
@@ -99,10 +126,11 @@ export function listLocalDir(target?: string): LocalListing {
   const truncated = dirents.length > MAX_ENTRIES
   const entries: LocalEntry[] = []
   for (const dirent of dirents.slice(0, MAX_ENTRIES)) {
-    if (!dirent.isDirectory()) continue
+    const child = path.join(dir, dirent.name)
+    if (!isBrowsableDir(child, dirent)) continue
     entries.push({
       name: dirent.name,
-      path: path.join(dir, dirent.name),
+      path: child,
       hidden: dirent.name.startsWith('.'),
     })
   }
