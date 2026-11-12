@@ -6,7 +6,7 @@
  * @module dsh-remote-development/client/flow
  */
 
-import { createElement, useCallback, useEffect, useState } from 'react'
+import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
@@ -81,6 +81,42 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
   const [localBooted, setLocalBooted] = useState(false)
   const [localMkdirOpen, setLocalMkdirOpen] = useState(false)
   const [localMkdirName, setLocalMkdirName] = useState('')
+  // The one folder list currently mounted (either tab renders at most one).
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+
+  // Claim the wheel over the whole dialog in the capture phase. The modal
+  // floats above pages that scroll — the workspace sidebar and the conversation
+  // — and any ancestor that instead consumes the gesture (a scroll lock, an
+  // overlay wrapper) would otherwise leave the folder list frozen while the page
+  // behind it moves. A native capture listener runs before those, and
+  // preventDefault is required: React's synthetic wheel handler is registered
+  // passive and cannot cancel the default.
+  //
+  // The innermost scrollable element is scrolled by hand rather than letting the
+  // browser pick: the body and the list are both scrollers, and which one
+  // overflows depends on the window height.
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (dialog === null) return
+    const scrollerFor = (target: Node): HTMLElement | null => {
+      let el: HTMLElement | null = target instanceof HTMLElement ? target : null
+      while (el !== null && el !== dialog) {
+        const overflowY = getComputedStyle(el).overflowY
+        if (el.scrollHeight > el.clientHeight && (overflowY === 'auto' || overflowY === 'scroll')) return el
+        el = el.parentElement
+      }
+      return null
+    }
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault()
+      const scroller = scrollerFor(event.target as Node)
+      if (scroller === null) return
+      // deltaMode 1 counts lines rather than pixels (Firefox, some Linux engines).
+      scroller.scrollTop += event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY
+    }
+    dialog.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => dialog.removeEventListener('wheel', onWheel, { capture: true })
+  }, [open])
 
   const loadMachines = useCallback((): void => {
     void props.listMachines().then((r) => {
@@ -237,6 +273,7 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
 
   return createElement('div', {
     className: 'rdv-dialog',
+    ref: dialogRef,
     role: 'dialog',
     'aria-modal': true,
     'aria-label': t('picker.title'),
