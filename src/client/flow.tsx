@@ -12,6 +12,7 @@ import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DirectoryFlowOwnerProps } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { ClientMachine, LocalEntry, LocalListing, PickerKind, RemoteEntry } from './api.ts'
+import { remoteDirname } from '../paths.ts'
 import * as api from './api.ts'
 
 /**
@@ -339,6 +340,13 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
                       `${m.name} (${m.username}@${m.host})`)),
                   ),
                   createElement(Button, { size: 'sm', onClick: () => loadDir('~') }, t('picker.home')),
+                  // Absent for `~` and for the root: neither has a parent the
+                  // operator could reach, and a disabled-looking button there
+                  // would invite a click that cannot do anything.
+                  path.startsWith('/') && path !== '/' && createElement(Button, {
+                    size: 'sm',
+                    onClick: () => loadDir(remoteDirname(path)),
+                  }, t('picker.up')),
                   createElement(Button, { size: 'sm', onClick: () => loadDir(path) }, t('picker.refresh')),
                 ),
             machines.length > 0 && createElement('div', { className: 'rdv-toolbar' },
