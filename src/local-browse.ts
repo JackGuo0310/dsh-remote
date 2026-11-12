@@ -196,12 +196,19 @@ export function createLocalDir(parent: string, name: string): string {
 /** How long an enumerated drive list stays valid; a volume set rarely changes mid-session. */
 const DRIVE_CACHE_MS = 60_000
 
-let cachedDrives: { at: number; paths: string[] } | undefined
+/**
+ * How long a substitute answer stays valid. A fallback is a guess, not an
+ * answer: caching it for a minute hid every other volume for the rest of that
+ * minute, which is what made `D:\` vanish from the picker.
+ */
+const DRIVE_FALLBACK_CACHE_MS = 5_000
+
+let cachedDrives: { at: number; paths: string[]; complete: boolean } | undefined
 
 /**
  * Every root the operator can browse to, so a Windows host can switch from `C:\`
  * to `D:\` without typing the path. Node exposes no volume enumeration, so on
- * Windows this asks PowerShell once and caches the answer; elsewhere the single
+ * Windows this asks the OS once and caches the answer; elsewhere the single
  * filesystem root is the only answer there is.
  *
  * The list is advisory, not a fence: a root that vanished or is inaccessible
@@ -211,32 +218,71 @@ let cachedDrives: { at: number; paths: string[] } | undefined
 export function listDriveRoots(): string[] {
   if (osPlatform() !== 'win32') return [path.parse(path.resolve(homedir())).root]
   const now = Date.now()
-  if (cachedDrives !== undefined && now - cachedDrives.at < DRIVE_CACHE_MS) return cachedDrives.paths
-  const paths = enumerateWindowsDrives()
-  cachedDrives = { at: now, paths }
-  return paths
+  if (cachedDrives !== undefined) {
+    const ttl = cachedDrives.complete ? DRIVE_CACHE_MS : DRIVE_FALLBACK_CACHE_MS
+    if (now - cachedDrives.at < ttl) return cachedDrives.paths
+  }
+  const enumerated = enumerateWindowsDrives()
+  cachedDrives = { at: now, paths: enumerated.paths, complete: enumerated.complete }
+  return enumerated.paths
 }
 
 /**
- * Ask PowerShell for the mounted volumes. A failure (no PowerShell, a locked
- * profile, a timeout) must not break the picker, so the system drive from the
- * environment stands in — that volume exists whenever the host is running.
- * @returns the volume roots, in mount order.
+ * Ask the OS for the mounted volumes, cheapest source first. `fsutil` is a
+ * built-in that answers in about a tenth of a second; PowerShell needs several
+ * seconds to start under a scanner-heavy profile, and this used to run it alone
+ * with a 3 s timeout — every start that overran it dropped all volumes but the
+ * system one from the picker.
+ * @returns the roots and whether the answer is complete or a substitute.
  */
-function enumerateWindowsDrives(): string[] {
+function enumerateWindowsDrives(): { paths: string[]; complete: boolean } {
+  const fromFsutil = rootsFromFsutil()
+  if (fromFsutil.length > 0) return { paths: fromFsutil, complete: true }
+  const fromPowerShell = rootsFromPowerShell()
+  if (fromPowerShell.length > 0) return { paths: fromPowerShell, complete: true }
+  // Both sources failed; the system drive exists whenever the host is running.
+  return { paths: [systemDriveRoot()], complete: false }
+}
+
+/**
+ * Read the volume roots from `fsutil fsinfo drives`.
+ *
+ * The command's lead-in is localized ("驱动器:", "Drives:"), so only the ASCII
+ * `X:\` tokens are read and the prefix is ignored. Output bytes are decoded as
+ * UTF-8 no matter the console code page; a mangled prefix cannot corrupt the
+ * letters and backslashes this cares about.
+ * @returns the volume roots, empty when `fsutil` is absent or refused.
+ */
+function rootsFromFsutil(): string[] {
+  try {
+    const out = execFileSync('fsutil.exe', ['fsinfo', 'drives'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    })
+    const roots = [...out.matchAll(/([A-Za-z]:\\)/g)].map((match) => match[1]!.toUpperCase())
+    return [...new Set(roots)]
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Read the volume roots from `Get-PSDrive`. Slower than {@link rootsFromFsutil}
+ * but it is the fallback that still works when `fsutil` is unavailable.
+ * @returns the volume roots, empty when PowerShell is absent or refused.
+ */
+function rootsFromPowerShell(): string[] {
   try {
     const script = 'Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Root }'
     const out = execFileSync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
-      { encoding: 'utf8', timeout: 3000, windowsHide: true },
+      { encoding: 'utf8', timeout: 15000, windowsHide: true },
     )
-    const roots = out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^[A-Za-z]:\\$/.test(line))
-    if (roots.length === 0) return [systemDriveRoot()]
-    return roots
+    return out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^[A-Za-z]:\\$/.test(line))
   } catch {
-    // PowerShell is absent or refused; the system drive is still browsable.
-    return [systemDriveRoot()]
+    return []
   }
 }
 

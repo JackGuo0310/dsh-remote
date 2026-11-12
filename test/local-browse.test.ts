@@ -178,6 +178,17 @@ test('every listing offers the browsable roots, and there is always at least one
   }
 })
 
+test('the volume list carries every mounted drive, not only the system one', () => {
+  // The picker renders its drive switcher only when more than one root comes
+  // back, so a list silently reduced to the system drive hides every other
+  // volume — the regression that dropped `D:\` from the dialog.
+  const roots = listDriveRoots()
+  assert.ok(roots.length >= 2, `expected more than the system drive, got ${JSON.stringify(roots)}`)
+  for (const root of roots) {
+    assert.match(root, process.platform === 'win32' ? /^[A-Za-z]:\\$/ : /^\//, `${root} is a volume root`)
+  }
+})
+
 test('creating under a non-absolute or missing parent is refused', () => {
   assert.throws(
     () => createLocalDir('relative', 'child'),
