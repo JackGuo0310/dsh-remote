@@ -93,7 +93,7 @@ export interface HostKeyStore {
 }
 
 const CHANNEL_DEAD_PATTERN =
-  /channel open failure|open failed|unexpected .*session termination|session termination|disconnect/i
+  /channel open failure|open failed|unexpected .*session termination|session termination|disconnect|not connected/i
 
 /**
  * One persistent SSH connection to a single remote identity. Concurrent calls
@@ -254,8 +254,28 @@ export class SshPool {
         this.client = client
         resolve(client)
       })
-      client.on('error', (err) => rejectOnce(err))
-      client.on('close', () => rejectOnce(new Error('ssh connection closed')))
+      // A live connection can die at any time — an idle timeout, a server
+      // restart, a network blip. Until this cleanup existed, `this.client`
+      // kept pointing at the dead socket and every later call failed with
+      // ssh2's "Not connected" instead of reconnecting, which no retry
+      // pattern matched: the pool looked connected while being unusable.
+      const dropClient = (): void => {
+        if (this.client !== client) return
+        this.client = null
+        const sftp = this.sftpSession
+        this.sftpSession = null
+        if (sftp !== null) {
+          try { sftp.end() } catch { /* already dead */ }
+        }
+      }
+      client.on('error', (err) => {
+        dropClient()
+        rejectOnce(err)
+      })
+      client.on('close', () => {
+        dropClient()
+        rejectOnce(new Error('ssh connection closed'))
+      })
 
       const buildOpts = (): Record<string, unknown> => {
         const opts: Record<string, unknown> = {
