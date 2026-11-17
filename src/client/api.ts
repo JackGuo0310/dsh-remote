@@ -190,6 +190,29 @@ export async function uploadRemoteFile(machineId: string, dir: string, file: Fil
   return { ok: true, ...(typeof data.path === 'string' ? { path: data.path } : {}) }
 }
 
+/** One remote file's content, as the in-tab viewer receives it. */
+export interface RemoteFileContent {
+  ok: boolean
+  path: string
+  text?: string
+  size?: number
+  /** The bytes are not UTF-8 text; the viewer offers a download instead. */
+  binary?: boolean
+  /** Above the in-place edit bound; downloadable but not editable here. */
+  tooLarge?: boolean
+  error?: string
+}
+
+/** Read one remote text file for the in-tab viewer. */
+export function readRemoteFile(machineId: string, path: string): Promise<RemoteFileContent> {
+  return call('POST', '/files/read', { machineId, path })
+}
+
+/** Save one remote text file (atomic publish on the host). */
+export function writeRemoteFile(machineId: string, path: string, text: string): Promise<{ ok: boolean; path: string; size: number; error?: string }> {
+  return call('POST', '/files/write', { machineId, path, text })
+}
+
 /** One open on-demand port forward. */
 export interface ForwardInfo {
   id: string

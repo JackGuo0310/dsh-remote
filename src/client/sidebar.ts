@@ -54,6 +54,8 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
   const injected: RemoteFilesInjected = {
     sessionRemote: api.sessionRemote,
     listRemoteFiles: api.listRemoteFiles,
+    readRemoteFile: api.readRemoteFile,
+    writeRemoteFile: api.writeRemoteFile,
     uploadRemoteFile: api.uploadRemoteFile,
     remoteDownloadUrl: api.remoteDownloadUrl,
     t,

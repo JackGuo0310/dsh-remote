@@ -139,11 +139,12 @@ interface Listing {
   failReaddir?: boolean
 }
 
-function scriptedWithSftp(script: Script, listings: Map<string, Listing> = new Map()): {
+function scriptedWithSftp(script: Script, listings: Map<string, Listing> = new Map(), files: Map<string, string> = new Map()): {
   factory: () => SshClientLike
   attempts: Attempt[]
   execs: string[]
   mkdirs: string[]
+  files: Map<string, string>
 } {
   const attempts: Attempt[] = []
   const execs: string[] = []
@@ -161,15 +162,27 @@ function scriptedWithSftp(script: Script, listings: Map<string, Listing> = new M
       innerExec(command, o as Record<string, unknown>, cb)
     }
     client.sftp = (cb: (err: Error | undefined, sftp: SFTPWrapper) => void): void => {
-      cb(undefined, fakeSftp(listings, mkdirs) as unknown as SFTPWrapper)
+      cb(undefined, fakeSftp(listings, mkdirs, files) as unknown as SFTPWrapper)
     }
     return client
   }
-  return { factory, attempts, execs, mkdirs }
+  return { factory, attempts, execs, mkdirs, files }
 }
 
-/** An SFTP session serving seeded listings and recording created directories. */
-function fakeSftp(listings: Map<string, Listing>, mkdirs: string[]) {
+/** An SFTP session serving seeded listings and files, recording created directories. */
+function fakeSftp(listings: Map<string, Listing>, mkdirs: string[], files: Map<string, string>) {
+  const enoent = (): Error => Object.assign(new Error('ENOENT'), { code: 2 })
+  const attrsOf = (p: string) => {
+    const content = files.get(p)
+    return {
+      isFile: () => content !== undefined,
+      isDirectory: () => listings.has(p),
+      isSymbolicLink: () => false,
+      size: content === undefined ? 0 : Buffer.byteLength(content),
+      mtime: 1_700_000_000,
+      mtimeMs: 1_700_000_000_000,
+    }
+  }
   return {
     readdir(dir: string, cb: (err: Error | null, entries?: unknown[]) => void): void {
       const listing = listings.get(dir)
@@ -198,8 +211,38 @@ function fakeSftp(listings: Map<string, Listing>, mkdirs: string[]) {
       mkdirs.push(p)
       cb(null)
     },
-    stat(_p: string, cb: (err: Error | null, stats?: unknown) => void): void {
-      cb(Object.assign(new Error('ENOENT'), { code: 2 }), undefined)
+    stat(p: string, cb: (err: Error | null, stats?: unknown) => void): void {
+      if (files.has(p) || listings.has(p)) {
+        cb(null, attrsOf(p))
+        return
+      }
+      cb(enoent(), undefined)
+    },
+    readFile(p: string, cb: (err: Error | null, data?: Buffer) => void): void {
+      const content = files.get(p)
+      if (content === undefined) {
+        cb(enoent())
+        return
+      }
+      cb(null, Buffer.from(content, 'utf8'))
+    },
+    writeFile(p: string, data: Buffer, cb: (err: Error | null) => void): void {
+      files.set(p, data.toString('utf8'))
+      cb(null)
+    },
+    rename(from: string, to: string, cb: (err: Error | null) => void): void {
+      const content = files.get(from)
+      if (content === undefined) {
+        cb(enoent())
+        return
+      }
+      files.delete(from)
+      files.set(to, content)
+      cb(null)
+    },
+    unlink(p: string, cb: (err: Error | null) => void): void {
+      files.delete(p)
+      cb(null)
     },
     on(): void {},
     end(): void {},
@@ -721,6 +764,64 @@ test('a port forward opened over HTTP is listed and closable', async () => {
   } finally {
     await close()
     forwarder.closeAll()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the in-tab viewer reads a remote text file and saves it back', async () => {
+  const files = new Map<string, string>([['/srv/app/README.md', '# hello']])
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-read-'))
+  const { factory, execs } = scriptedWithSftp({ expectPassword: 'pw' }, new Map(), files)
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.9.3', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+
+    const read = await post(`${url}/files/read`, { machineId: id, path: '/srv/app/README.md' })
+    assert.equal(read.ok, true)
+    assert.equal(read.text, '# hello')
+    assert.equal(read.size, 7)
+    // The bytes came over SFTP, not from a shell `cat`.
+    assert.equal(execs.some((c) => c.includes('cat ')), false)
+
+    const written = await post(`${url}/files/write`, { machineId: id, path: '/srv/app/README.md', text: '# changed' })
+    assert.equal(written.ok, true)
+    // Publication is temp file + rename, so the real name only ever holds
+    // complete content.
+    assert.equal(files.get('/srv/app/README.md'), '# changed')
+
+    const again = await post(`${url}/files/read`, { machineId: id, path: '/srv/app/README.md' })
+    assert.equal(again.text, '# changed')
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the viewer refuses a path outside a file, and a binary file is reported as such', async () => {
+  const files = new Map<string, string>([['/srv/app/logo.bin', '\u0000\u0001binary']])
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-read2-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' }, new Map(), files)
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.9.4', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+
+    const binary = await post(`${url}/files/read`, { machineId: id, path: '/srv/app/logo.bin' })
+    assert.equal(binary.ok, true)
+    assert.equal(binary.binary, true)
+
+    const missing = await post(`${url}/files/read`, { machineId: id, path: '/srv/app/missing.txt' })
+    assert.equal(missing.ok, false)
+
+    const relative = await post(`${url}/files/read`, { machineId: id, path: 'srv/app/README.md' })
+    assert.equal(relative.ok, false)
+  } finally {
+    await close()
     world.dispose()
     rmSync(root, { recursive: true, force: true })
   }

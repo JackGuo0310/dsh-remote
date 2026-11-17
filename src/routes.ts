@@ -12,7 +12,7 @@ import { RemoteWorld } from './world.ts'
 import type { SshPool } from './pool.ts'
 import type { MachineRef } from './world.ts'
 import type { ForwardManager } from './forward.ts'
-import { ensureRemoteDirs, listRemoteDir, sftpCall, statPath } from './remote-io.ts'
+import { ensureRemoteDirs, listRemoteDir, publishRemoteFile, readRemoteText, sftpCall, statPath } from './remote-io.ts'
 import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
@@ -701,6 +701,73 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
           req.pipe(file)
         } catch (err) {
           req.resume()
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/read`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const remotePath = normalizeRemotePath(String(body.path ?? ''))
+        if (!remotePath.startsWith('/')) return sendJson(res, 400, { ok: false, error: 'an absolute remote file path is required' })
+        try {
+          const sftp = await world.sftpOn(ref, `read ${remotePath}`)
+          const info = await statPath(sftp, remotePath, undefined, world.config.commandTimeoutMs)
+          if (info === undefined) throw new Error(`"${remotePath}" does not exist`)
+          if (info.type !== 'file') throw new Error(`"${remotePath}" is not a regular file`)
+          // The viewer edits text in a textarea and saves through a JSON body,
+          // so both directions share one bound (the request body cap is 256 KB,
+          // and JSON escaping must fit inside it). A larger file is
+          // downloadable, not editable in place.
+          const maxBytes = 200 * 1024
+          if ((info.size ?? 0) > maxBytes) {
+            return sendJson(res, 200, { ok: true, path: remotePath, tooLarge: true, size: info.size ?? 0 })
+          }
+          try {
+            const text = await readRemoteText(sftp, remotePath, undefined, world.config.commandTimeoutMs, maxBytes)
+            return sendJson(res, 200, { ok: true, path: remotePath, text, size: info.size ?? Buffer.byteLength(text) })
+          } catch (err) {
+            // A binary file is a viewable fact, not a failure: the viewer shows
+            // a download affordance instead of text.
+            const code = (err as { code?: unknown }).code
+            if (code === 'FS_NOT_TEXT') {
+              return sendJson(res, 200, { ok: true, path: remotePath, binary: true, size: info.size ?? 0 })
+            }
+            if (code === 'FS_TOO_LARGE') {
+              return sendJson(res, 200, { ok: true, path: remotePath, tooLarge: true, size: info.size ?? 0 })
+            }
+            throw err
+          }
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/write`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const remotePath = normalizeRemotePath(String(body.path ?? ''))
+        if (!remotePath.startsWith('/')) return sendJson(res, 400, { ok: false, error: 'an absolute remote file path is required' })
+        if (typeof body.text !== 'string') return sendJson(res, 400, { ok: false, error: 'text is required' })
+        try {
+          const sftp = await world.sftpOn(ref, `write ${remotePath}`)
+          // Publish atomically: a failed save never leaves a half-written file
+          // under the real name.
+          await publishRemoteFile(sftp, remotePath, Buffer.from(body.text, 'utf8'), undefined, world.config.commandTimeoutMs)
+          return sendJson(res, 200, { ok: true, path: remotePath, size: Buffer.byteLength(body.text) })
+        } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })
         }
       },
