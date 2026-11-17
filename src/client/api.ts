@@ -127,8 +127,96 @@ export function createAnchor(machineId: string, path: string): Promise<{ ok: boo
 }
 
 /** Whether one session's workspace is remote (and its remote root). */
-export function sessionRemote(sessionId: string): Promise<{ remote: boolean; remotePath?: string }> {
+export function sessionRemote(sessionId: string): Promise<{ remote: boolean; remotePath?: string; machineId?: string; machineName?: string }> {
   return call('GET', `/session-remote?sessionId=${encodeURIComponent(sessionId)}`)
+}
+
+/** One file-browser row: a remote file or directory. */
+export interface RemoteFileEntry {
+  name: string
+  dir: boolean
+  path: string
+  /** Byte size; files only. */
+  size?: number
+}
+
+/** One remote directory level, as the sidebar's remote-file tab renders it. */
+export interface RemoteFileLevel {
+  ok: boolean
+  path: string
+  /** Parent directory, or null at the filesystem root. */
+  parent: string | null
+  entries: RemoteFileEntry[]
+  error?: string
+}
+
+/** List one remote directory level with its files and subdirectories. */
+export function listRemoteFiles(machineId: string, path: string): Promise<RemoteFileLevel> {
+  return call('POST', '/files/ls', { machineId, path })
+}
+
+/**
+ * The URL a browser downloads one remote file from. A plain same-origin GET,
+ * so it can sit in an anchor and use the browser's own download handling
+ * (including its save-location prompt).
+ * @param machineId - saved machine.
+ * @param path - absolute remote file path.
+ * @returns the download URL.
+ */
+export function remoteDownloadUrl(machineId: string, path: string): string {
+  return `${PREFIX}/files/download?machineId=${encodeURIComponent(machineId)}&path=${encodeURIComponent(path)}`
+}
+
+/**
+ * Upload one browser-side file into a remote directory. The body is the raw
+ * file (never multipart), so a large upload streams to SFTP instead of being
+ * buffered or parsed twice.
+ * @param machineId - saved machine.
+ * @param dir - absolute remote directory.
+ * @param file - the picked file.
+ * @returns the published remote path.
+ */
+export async function uploadRemoteFile(machineId: string, dir: string, file: File): Promise<{ ok: boolean; path?: string; error?: string }> {
+  const query = new URLSearchParams({ machineId, dir, name: file.name })
+  const res = await fetch(`${PREFIX}/files/upload?${query.toString()}`, {
+    method: 'POST',
+    // No Content-Type: the body IS the file, and the host frames it straight
+    // into SFTP without decoding a multipart envelope.
+    body: file,
+  })
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`)
+  if (data.ok === false) throw new Error(typeof data.error === 'string' ? data.error : 'upload failed')
+  return { ok: true, ...(typeof data.path === 'string' ? { path: data.path } : {}) }
+}
+
+/** One open on-demand port forward. */
+export interface ForwardInfo {
+  id: string
+  machine: string
+  remoteHost: string
+  remotePort: number
+  localPort: number
+  url: string
+}
+
+/** List the forwards this harness currently holds open. */
+export function listForwards(): Promise<{ forwards: ForwardInfo[]; lastError: string }> {
+  return call('GET', '/forwards')
+}
+
+/**
+ * Open one temporary forward to a service on a remote machine.
+ * @param input - machine, remote port/host, optional loopback port.
+ * @returns the opened forward's record.
+ */
+export function openForward(input: { machineId: string; remotePort: number; remoteHost?: string; localPort?: number }): Promise<{ ok: boolean; forward: ForwardInfo }> {
+  return call('POST', '/forwards', input)
+}
+
+/** Close one forward by id. */
+export function closeForward(id: string): Promise<{ ok: boolean }> {
+  return call('POST', '/forwards/close', { id })
 }
 
 /** One remote workspace anchor with its machine join (machineId/color '' = unjoined). */

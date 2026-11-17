@@ -13,6 +13,7 @@ import { HostKeyGuard } from './hostkey.ts'
 import type { KnownHostEntry } from './hostkey.ts'
 import { SshPool, UnsupportedRemoteError } from './pool.ts'
 import type { SFTPWrapper } from './pool.ts'
+import type { ClientChannel } from 'ssh2'
 import type { ClientFactory, PoolTarget, PoolTunables } from './pool.ts'
 import { ANCHOR_META_FILE, createAnchorDir, matchRemotePath, scanAnchors } from './anchors.ts'
 import type { AnchorInfo, AnchorMeta } from './anchors.ts'
@@ -433,8 +434,7 @@ export class RemoteWorld {
 
   /**
    * Run one command on a machine with the audit hook and the Windows-remote
-   * refusal surfaced as a typed error.
-   * @param ref - machine reference.
+   * refusal surfaced as a typed error.   * @param ref - machine reference.
    * @param command - remote command line.
    * @param opts - timeout/stdin/abort.
    * @returns the exec result.
@@ -456,6 +456,31 @@ export class RemoteWorld {
   }
 
   // ── audit + known hosts ───────────────────────────────────────────────────
+
+  /**
+   * Open one `direct-tcpip` channel from a machine's pool to a service the
+   * REMOTE host can reach. The channel is a raw duplex owned by the caller
+   * (the on-demand port forwarder), and the open is audited like any other
+   * remote operation.
+   * @param machineId - saved machine id.
+   * @param host - target host as the remote machine resolves it.
+   * @param port - target TCP port.
+   * @returns the open channel.
+   */
+  async forwardOn(machineId: string, host: string, port: number): Promise<ClientChannel> {
+    const ref = this.machineById(machineId)
+    if (ref === null) throw new Error(`no saved machine matches machineId "${machineId}"`)
+    const pool = this.poolFor(ref)
+    try {
+      const channel = await pool.forward(host, port)
+      this.audit(ref, `forward ${host}:${port}`, null)
+      return channel
+    } catch (err) {
+      this.audit(ref, `forward ${host}:${port}`, null)
+      throw err
+    }
+  }
+
 
   private auditFile(): string {
     return path.join(this.anchorRoot, 'audit.log')

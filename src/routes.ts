@@ -11,7 +11,8 @@ import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { RemoteWorld } from './world.ts'
 import type { SshPool } from './pool.ts'
 import type { MachineRef } from './world.ts'
-import { ensureRemoteDirs, listRemoteDir } from './remote-io.ts'
+import type { ForwardManager } from './forward.ts'
+import { ensureRemoteDirs, listRemoteDir, sftpCall, statPath } from './remote-io.ts'
 import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
@@ -87,6 +88,38 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body)
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text) })
   res.end(text)
+}
+
+/**
+ * One download's `Content-Disposition`. The plain name stays ASCII so any
+ * client reads it; the exact name rides the RFC 5987 form, so a remote file
+ * with CJK characters or quotes saves under its real name.
+ * @param name - the remote basename.
+ */
+export function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') || 'download'
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`
+}
+
+/**
+ * Expand a leading `~` against the machine's home. Browsing and uploads name
+ * directories the model or the operator typed, and `~/src` must mean the same
+ * thing to them as it does in a shell.
+ * @param world - the remote world.
+ * @param ref - target machine.
+ * @param raw - the path as given.
+ * @returns the absolute remote path.
+ */
+async function expandRemotePath(world: RemoteWorld, ref: MachineRef, raw: string): Promise<string> {
+  const path = normalizeRemotePath(raw || '~')
+  if (path !== '~' && !path.startsWith('~/')) return path
+  const home = (await world.execOn(ref, 'echo $HOME', { timeoutMs: 8000 })).stdout.trim()
+  return normalizeRemotePath(home ? path.replace(/^~/, home) : path)
+}
+
+/** The request's query string, parsed without a base URL guess. */
+function queryOf(req: IncomingMessage): URLSearchParams {
+  return new URL(req.url ?? '/', 'http://localhost').searchParams
 }
 
 /** One anchor with its machine join, as the tree marker consumes it. */
@@ -235,8 +268,9 @@ export function machineFromBody(body: Record<string, unknown>): MachineInput {
  * @param ctx - plugin context (effects scope the disposers).
  * @param webServer - the running web server.
  * @param world - the remote world coordinator.
+ * @param forwards - the on-demand port forwarder.
  */
-export function registerRoutes(ctx: Context, webServer: WebServer, world: RemoteWorld): void {
+export function registerRoutes(ctx: Context, webServer: WebServer, world: RemoteWorld, forwards: ForwardManager): void {
 
   // Every remote operation names its machine explicitly — there is no
   // implicit default target. A missing or unknown machineId is an error,
@@ -414,7 +448,15 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
           if (!cwd) return sendJson(res, 200, { remote: false })
           const local = world.classifyHostPath(cwd)
           if (local.kind !== 'remote') return sendJson(res, 200, { remote: false })
-          return sendJson(res, 200, { remote: true, remotePath: local.route.remotePath })
+          // The machine join lets the sidebar's remote-file tab open on the
+          // same host the session's tools are routed to.
+          const joined = world.machineForAnchor(local.route.anchor)
+          return sendJson(res, 200, {
+            remote: true,
+            remotePath: local.route.remotePath,
+            machineId: joined?.machine.id ?? '',
+            machineName: joined?.machine.name ?? '',
+          })
         } catch (err) {
           return sendJson(res, 200, { remote: false, error: (err as Error).message })
         }
@@ -504,6 +546,198 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         } catch (err) {
           return sendJson(res, 400, { ok: false, error: (err as Error).message })
         }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/ls`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        try {
+          const dir = await expandRemotePath(world, ref, String(body.path ?? '~'))
+          const sftp = await world.sftpOn(ref, `readdir ${dir}`)
+          const rows = await listRemoteDir(sftp, dir, undefined, world.config.commandTimeoutMs)
+          // Files and directories both, unlike the picker's `/ls`: this tab is
+          // a file browser, so a row may be opened, downloaded, or entered.
+          const parent = dir === '/' ? null : dir.slice(0, Math.max(1, dir.lastIndexOf('/')) ) || '/'
+          const entries = rows
+            .map((r) => ({
+              name: r.name,
+              dir: r.type === 'directory',
+              path: dir === '/' ? `/${r.name}` : `${dir}/${r.name}`,
+              ...(r.size === undefined ? {} : { size: r.size }),
+            }))
+            .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
+          return sendJson(res, 200, { ok: true, path: dir, parent, entries })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/download`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        }
+        const query = queryOf(req)
+        const machineId = query.get('machineId') ?? ''
+        const ref = machineId ? world.machineById(machineId) : null
+        if (!ref) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end(machineId ? `no saved machine matches machineId "${machineId}"` : 'machineId is required')
+          return
+        }
+        const remotePath = normalizeRemotePath(query.get('path') ?? '')
+        if (!remotePath.startsWith('/')) {
+          res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end('an absolute remote file path is required')
+          return
+        }
+        try {
+          const sftp = await world.sftpOn(ref, `download ${remotePath}`)
+          const info = await statPath(sftp, remotePath, undefined, world.config.commandTimeoutMs)
+          if (info === undefined) throw new Error(`"${remotePath}" does not exist`)
+          if (info.type !== 'file') throw new Error(`"${remotePath}" is not a regular file`)
+          const headers: Record<string, string | number> = {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': contentDisposition(remoteBasename(remotePath) || 'download'),
+            'Cache-Control': 'no-store',
+          }
+          if (info.size !== undefined) headers['Content-Length'] = info.size
+          res.writeHead(200, headers)
+          if (req.method === 'HEAD') res.end()
+          const stream = sftp.createReadStream(remotePath)
+          // A browser that cancels the download must stop the transfer rather
+          // than let it run to completion into a dead socket. `res` is the
+          // abort signal: the request stream reports a completed GET the same
+          // way it reports a cancelled one.
+          res.on('close', () => { if (!res.writableEnded) stream.destroy() })
+          stream.on('error', () => res.destroy())
+          stream.pipe(res)
+        } catch (err) {
+          if (!res.headersSent) res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end((err as Error).message)
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/upload`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const query = queryOf(req)
+        const machineId = query.get('machineId') ?? ''
+        const name = query.get('name') ?? ''
+        const ref = machineId ? world.machineById(machineId) : null
+        if (!ref) {
+          req.resume()
+          return sendJson(res, 400, {
+            ok: false,
+            error: machineId ? `no saved machine matches machineId "${machineId}"` : 'machineId is required',
+          })
+        }
+        // A name is one path segment, never a path: `../x` must not escape the
+        // directory the operator is looking at.
+        if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+          req.resume()
+          return sendJson(res, 400, { ok: false, error: 'a single file name is required' })
+        }
+        let dir: string
+        try {
+          dir = await expandRemotePath(world, ref, query.get('dir') ?? '~')
+        } catch (err) {
+          req.resume()
+          return sendJson(res, 400, { ok: false, error: (err as Error).message })
+        }
+        const target = dir === '/' ? `/${name}` : `${dir}/${name}`
+        const timeoutMs = world.config.commandTimeoutMs
+        try {
+          const sftp = await world.sftpOn(ref, `upload ${target}`)
+          await ensureRemoteDirs(sftp, dir, undefined, timeoutMs)
+          const tmp = `${target}.rdv-upload-${Math.random().toString(36).slice(2, 10)}`
+          const file = sftp.createWriteStream(tmp)
+          let size = 0
+          let settled = false
+          const fail = (error: string): void => {
+            if (settled) return
+            settled = true
+            try { file.destroy() } catch { /* already closed */ }
+            try { sftp.unlink(tmp, () => {}) } catch { /* best-effort cleanup */ }
+            if (!res.headersSent) sendJson(res, 200, { ok: false, error })
+          }
+          req.on('data', (chunk: Buffer) => { size += chunk.length })
+          req.on('aborted', () => { fail('upload aborted') })
+          file.on('error', (err: Error) => { fail(`upload failed: ${err.message}`) })
+          file.on('close', () => {
+            if (settled) return
+            settled = true
+            void (async (): Promise<void> => {
+              try {
+                // Publish by rename, so a half-transferred file never appears
+                // under the real name. Some servers refuse a rename over an
+                // existing file: replace it explicitly in that case.
+                try {
+                  await sftpCall('rename', undefined, timeoutMs, (cb) => sftp.rename(tmp, target, cb as never))
+                } catch {
+                  await sftpCall('unlink', undefined, timeoutMs, (cb) => sftp.unlink(target, cb as never)).catch(() => {})
+                  await sftpCall('rename', undefined, timeoutMs, (cb) => sftp.rename(tmp, target, cb as never))
+                }
+                sendJson(res, 200, { ok: true, path: target, size })
+              } catch (err) {
+                try { sftp.unlink(tmp, () => {}) } catch { /* best-effort cleanup */ }
+                sendJson(res, 200, { ok: false, error: (err as Error).message })
+              }
+            })()
+          })
+          req.pipe(file)
+        } catch (err) {
+          req.resume()
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/forwards`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method === 'GET') {
+          return sendJson(res, 200, { forwards: forwards.list(), lastError: forwards.lastError ?? '' })
+        }
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        try {
+          const record = await forwards.open({
+            machineId: ref.machine.id,
+            remotePort: Number(body.remotePort),
+            ...(typeof body.remoteHost === 'string' && body.remoteHost.trim() ? { remoteHost: body.remoteHost } : {}),
+            ...(body.localPort === undefined || body.localPort === null || Number(body.localPort) === 0
+              ? {}
+              : { localPort: Number(body.localPort) }),
+          })
+          return sendJson(res, 200, { ok: true, forward: record })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/forwards/close`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        const id = String(body?.id ?? '')
+        if (!id) return sendJson(res, 400, { ok: false, error: 'id is required' })
+        return sendJson(res, 200, { ok: forwards.close(id) })
       },
     },
     {

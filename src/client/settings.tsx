@@ -13,7 +13,7 @@ import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the settings section owner-share declaration.
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ClientMachine, LocalPickerMode, ProbeResult } from './api.ts'
+import type { ClientMachine, ForwardInfo, LocalPickerMode, ProbeResult } from './api.ts'
 
 /** Injected face bound in the plugin's apply closure. */
 export interface SettingsInjected {
@@ -25,6 +25,10 @@ export interface SettingsInjected {
   setPreferences: (localPicker: LocalPickerMode) => Promise<{ ok: true; localPicker: LocalPickerMode }>
   /** Re-read the anchors and recolor the workspace tree's remote markers. */
   refreshTreeMark: () => Promise<void>
+  /** Open on-demand port forwards, listed and closed here. */
+  listForwards: () => Promise<{ forwards: ForwardInfo[]; lastError: string }>
+  openForward: (input: { machineId: string; remotePort: number; remoteHost?: string; localPort?: number }) => Promise<{ ok: boolean; forward: ForwardInfo }>
+  closeForward: (id: string) => Promise<{ ok: boolean }>
   t: Translate
 }
 
@@ -107,6 +111,63 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const [machineResults, setMachineResults] = useState<Record<string, { ok: boolean; text: string }>>({})
   const [localPicker, setLocalPicker] = useState<LocalPickerMode>('browse')
   const [pickerBusy, setPickerBusy] = useState(false)
+  // On-demand forwards: live records plus the small add form.
+  const [forwards, setForwards] = useState<ForwardInfo[]>([])
+  const [forwardMachine, setForwardMachine] = useState('')
+  const [forwardPort, setForwardPort] = useState('')
+  const [forwardHost, setForwardHost] = useState('')
+  const [forwardBusy, setForwardBusy] = useState(false)
+  const [forwardError, setForwardError] = useState('')
+
+  const refreshForwards = useCallback((): void => {
+    void props.listForwards().then((r) => {
+      setForwards(r.forwards)
+      setForwardError(r.lastError)
+    }).catch((err: Error) => setForwardError(err.message))
+  }, [props])
+
+  useEffect(() => { refreshForwards() }, [refreshForwards])
+
+  /**
+   * Open one forward from the form, defaulting the machine to the first saved
+   * one: a single-machine setup never has to pick twice.
+   */
+  const openForward = (): void => {
+    const machineId = forwardMachine || machines[0]?.id || ''
+    const remotePort = Number(forwardPort)
+    if (machineId === '') { setForwardError(t('forwards.machine')); return }
+    if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+      setForwardError(t('forwards.remotePort'))
+      return
+    }
+    setForwardBusy(true)
+    setForwardError('')
+    void props.openForward({
+      machineId,
+      remotePort,
+      ...(forwardHost.trim() === '' ? {} : { remoteHost: forwardHost.trim() }),
+    }).then(() => {
+      setForwardBusy(false)
+      setForwardPort('')
+      setNotice(t('forwards.opened'))
+      refreshForwards()
+    }).catch((err: Error) => {
+      setForwardBusy(false)
+      setForwardError(err.message)
+    })
+  }
+
+  const closeForward = (id: string): void => {
+    setForwardBusy(true)
+    setForwardError('')
+    void props.closeForward(id).then(() => {
+      setForwardBusy(false)
+      refreshForwards()
+    }).catch((err: Error) => {
+      setForwardBusy(false)
+      setForwardError(t('forwards.closeFailed') + ': ' + err.message)
+    })
+  }
 
   useEffect(() => {
     void props.getPreferences().then((p) => setLocalPicker(p.localPicker))
@@ -324,6 +385,36 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
           )
           }),
     ),
+    // ── on-demand port forwards ────────────────────────────────────────────
+    createElement('div', { className: 'rdv-sectionTitle' }, t('forwards.title')),
+    createElement('p', { className: 'rdv-intro' }, t('forwards.intro')),
+    createElement('div', { className: 'rdv-cards' },
+      forwards.length === 0
+        ? createElement('div', { className: 'rdv-empty' }, t('forwards.none'))
+        : forwards.map((f) => createElement('div', { key: f.id, className: 'rdv-forwardRow' },
+            createElement('span', { className: 'rdv-forwardUrl', title: f.url }, f.url),
+            createElement('span', { className: 'rdv-forwardTarget' }, `${f.remoteHost}:${f.remotePort}`),
+            createElement(Button, { size: 'sm', disabled: forwardBusy, onClick: () => closeForward(f.id) },
+              t('forwards.close')),
+          )),
+    ),
+    machines.length > 0 && createElement('div', { className: 'rdv-row' },
+      createElement('label', { className: 'rdv-field' },
+        createElement('span', { className: 'rdv-label' }, t('forwards.machine')),
+        createElement('select', {
+          className: 'rdv-select',
+          value: forwardMachine || machines[0]?.id || '',
+          onChange: (e: React.ChangeEvent<HTMLSelectElement>) => setForwardMachine(e.target.value),
+        }, machines.map((m) => createElement('option', { key: m.id, value: m.id }, m.name))),
+      ),
+      field(t('forwards.remotePort'), forwardPort, (v) => setForwardPort(v), '3000', 'number'),
+      field(t('forwards.remoteHost'), forwardHost, (v) => setForwardHost(v), '127.0.0.1'),
+    ),
+    machines.length > 0 && createElement('div', { className: 'rdv-actions', style: { justifyContent: 'flex-start', marginTop: 0 } },
+      createElement(Button, { size: 'sm', disabled: forwardBusy, onClick: openForward }, t('forwards.open')),
+    ),
+    createElement('p', { className: 'rdv-hint' }, t('forwards.localOnly')),
+    forwardError !== '' && createElement('div', { className: 'rdv-error' }, forwardError),
     draft !== null && createElement('div', { className: 'rdv-form' },
       createElement('div', { className: 'rdv-row' },
         field(t('settings.name'), draft.name, (v) => setDraft({ ...draft, name: v }), draft.host || 'my-server'),

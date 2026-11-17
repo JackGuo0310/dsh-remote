@@ -492,6 +492,27 @@ export class SshPool {
     })
   }
 
+  /**
+   * Open one `direct-tcpip` channel to a host the REMOTE machine can reach.
+   * The channel is a raw duplex: whatever is written to it reaches the service,
+   * and the caller owns closing it. Used by the on-demand port forwarder.
+   * @param destHost - target host as resolved from the remote machine.
+   * @param destPort - target TCP port.
+   * @returns the open channel.
+   */
+  async forward(destHost: string, destPort: number): Promise<ClientChannel> {
+    const client = await this.connectWithRetry()
+    return new Promise<ClientChannel>((resolve, reject) => {
+      client.forwardOut('127.0.0.1', 0, destHost, destPort, (err, channel) => {
+        if (err) {
+          reject(new Error(`ssh forward to ${destHost}:${destPort} failed: ${err.message}`))
+          return
+        }
+        resolve(channel)
+      })
+    })
+  }
+
   private async connectWithRetry(): Promise<SshClientLike> {
     try {
       return await this.connect()

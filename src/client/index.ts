@@ -23,6 +23,7 @@ import type { ServiceLookup } from './tree-mark.ts'
 import { RemoteFlow } from './flow.tsx'
 import { MachinesSection } from './settings.tsx'
 import { registerReferenceSource } from './reference.ts'
+import { registerRemoteFilesTab } from './sidebar.ts'
 
 /** Required services (cordis fiber inject). */
 export const inject = ['slots', 'uiWorkspace', 'locale', 'inputTriggers']
@@ -61,6 +62,9 @@ export function apply(ctx: ClientContext): void {
       getPreferences: api.getPreferences,
       setPreferences: api.setPreferences,
       refreshTreeMark: () => refreshTreeMark(),
+      listForwards: api.listForwards,
+      openForward: api.openForward,
+      closeForward: api.closeForward,
       t,
     }),
   }, MachinesSection))
@@ -108,4 +112,7 @@ export function apply(ctx: ClientContext): void {
     }))
 
   registerReferenceSource(ctx, api.sessionRemote, t)
+  // Optional: only mounts when dsh-better-sidebar is installed, and only
+  // through its public registerTab seam.
+  registerRemoteFilesTab(ctx, t)
 }

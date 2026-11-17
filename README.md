@@ -10,7 +10,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This plugin adds lightweight remote development to DeepSeek Harness: you register an SSH machine, pick a remote directory as the session's workspace, and the agent then works on that remote workspace with the SAME tools it uses locally — file tools, shell, and search. The plugin does not add any model-facing tool and no third-party UI plugin: it replaces the filesystem, subprocess, and bash providers with routing versions that translate local tool calls into remote execution over SSH, and it contributes one settings section plus one workspace directory-flow dialog in the Web GUI.
+This plugin adds lightweight remote development to DeepSeek Harness: you register an SSH machine, pick a remote directory as the session's workspace, and the agent then works on that remote workspace with the SAME tools it uses locally — file tools, shell, and search. The plugin adds no model-facing file or shell tool: it replaces the filesystem, subprocess, and bash providers with routing versions that translate local tool calls into remote execution over SSH. It also contributes one settings section, one workspace directory-flow dialog, a remote-file browser tab inside the third-party `dsh-better-sidebar` when that plugin is installed, and three small model tools for on-demand port forwarding (a tunnel is neither a filesystem nor a shell operation).
 
 <a id="highlights"></a>
 ## Highlights
@@ -18,6 +18,8 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 - **Identical toolset.** Remote workspaces add no tool calls: the agent works with the exact same tools as a local workspace, and the plugin translates those calls to remote execution underneath.
 - **Zero remote dependencies.** The remote machine needs no extra server-side component — an SSH connection is all it takes.
 - **Web GUI integration.** Connection management covers password / private key / SSH agent, jump hosts, host-key TOFU, and connection testing; remote workspaces can be told apart by a custom per-machine color.
+- **Remote files where you already look.** When `dsh-better-sidebar` is installed, a **Remote files** tab appears in it through that plugin's public `registerTab` seam — browsing the session's remote workspace over SFTP, with upload into and download out of the remote directory. The sidebar's own files tab keeps reading the local host, which is why this is a separate tab rather than a replacement.
+- **On-demand port forwarding.** A preview server on the remote machine becomes reachable at `127.0.0.1:<port>` without any preconfiguration: the agent opens a forward when the user asks to look at something, and the settings page lists and closes it. Listeners bind loopback only and die with the plugin.
 
 ## Table of Contents
 
@@ -99,6 +101,8 @@ Three steps and nothing else:
 1. **Add a machine.** In the Web GUI's **@jackguo0310/dsh-remote** settings section, enter host, port, and username, choose password / private key / SSH agent authentication (optional jump proxy), click **test connection**, then save. A saved machine can be retested from its own card.
 2. **Pick a remote directory.** In the workspace directory flow (the hero "choose directory" dialog or the sidebar workspaces picker), open the **Remote** tab, browse the machine's directories, and set one as the session workspace.
 3. **Work as usual.** That is the whole setup. File tools, shell, bash, and search run through the same tool calls as before — only now they execute on the remote machine; the model's working directory is the remote path, so it needs no special instructions and gains no new tools. Anything outside the chosen directory keeps local behavior, so existing sessions are untouched.
+4. **Browse, upload, and download (optional).** With `dsh-better-sidebar` installed, open the **Remote files** tab in the sidebar: it lists the session's remote directory, uploads picked files into it, and downloads a file by clicking its row. Both directions move bytes between the remote machine and the browser you are looking at.
+5. **Preview a remote service (optional).** Ask the agent to open a forward for the port the remote process printed, or open one from the settings section; the returned `127.0.0.1:<port>` URL then serves that remote port in a browser on the machine running DSH.
 
 Under the hood, setting a remote workspace creates an **anchor** under `$DSH_HOME/remote-workspaces/<host>-<user>-<port>/<basename>` — a real local directory whose metadata records the remote coordinates. There is no "current machine" and no default target: the anchor alone decides where its session's tools execute. If that machine is later deleted, operations on the workspace fail with an explicit "machine is no longer configured" error instead of silently running elsewhere — re-add the machine to resume, or delete the workspace directory.
 
@@ -118,6 +122,10 @@ Three routing providers replace the base row of the same service, so every local
 - **Remote workspaces display their remote path.** The shell shows a workspace's directory — the tree's root header and the workspace list's hover card — as the session's working directory, which for a remote workspace is the plugin's local anchor directory. The client keeps an alias table (anchor directory → remote path, from the same `/status` join the marker color uses) and rewrites those display texts to the remote path through a mutation observer, touching only existing text nodes so React's reconciler keeps every element it owns. The underlying `data-files-*` coordinates stay local: the tree still navigates by them.
 
 **The model never sees the anchor handle.** The harness's system prompt reports the session's working directory; for a remote session the plugin overrides that variable per agent with the remote path, so the model-visible `cwd` is the directory its commands actually run in. As a safety net, anchor-directory spellings (absolute, `~`, `$HOME`, `${HOME}`) in command text are rewritten to their remote paths before execution — same-machine anchors only, stdin left verbatim. Local sessions pass through unchanged.
+
+**On-demand forwarding is a separate service, not a routing provider.** `ForwardManager` owns one `net.Server` per open tunnel on `127.0.0.1`, and each accepted socket is bridged into an ssh2 `direct-tcpip` channel through that machine's pooled connection (`SshPool.forward`). Nothing is persisted: the record exists from `open()` until `close()`, the plugin unloading, or the harness exiting, and the settings page and the three `remote_forward_*` tools read the same registry. The listener never binds a public interface.
+
+**The remote-file tab uses the sidebar's public seam.** `ctx.betterSidebar.registerTab()` is called from an optional cordis injection, so the package is not a dependency of this plugin: without `dsh-better-sidebar` the service never appears, the injection never runs, and nothing else changes. The tab itself only knows a session id — it asks this plugin's own routes for the machine join and the listings, so its uploads and downloads cross SSH rather than touching the host filesystem.
 
 Remote mutation policy mirrors the local sandbox: read-only mode rejects remote writes; workspace-write allows writes only under the remote workspace root and the remote `/tmp`. Remote writes are serialized per file, publish atomically (temp file + rename), and refuse stale versions and ambiguous edits with the same error codes the local filesystem produces.
 
@@ -140,6 +148,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 | `remoteRipgrep` | `rg` | Remote binary the packaged ripgrep is rewritten to. |
 | `localPicker` | `browse` | Default interaction of the 本机 tab: `browse` (in-app web browser, works from any client) or `native` (OS chooser, only for an operator at the host's screen). A settings-page choice overrides this default. |
 | `anchorRoot` | `$DSH_HOME/remote-workspaces` | Root directory for anchor directories. |
+| `maxForwards` | 8 | Ceiling on simultaneously open on-demand port forwards. |
 | `auditLog` | **on** | Append-only audit of every remote execution, one `timestamp \| user@host:port \| command \| exit` line each. |
 
 -----
@@ -151,7 +160,11 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **Windows local hosts route remote shell commands.** A Windows host mounts the pwsh-based routing executor: local workdirs keep the sandboxed pwsh executor, and anchor workdirs cross to the remote host's bash. The model sees the `bash` tool for remote sessions and the `pwsh` tool for local ones.
 - **Persistent terminal sessions are not supported.** The terminal tool reports an explicit "not supported by @jackguo0310/dsh-remote" error instead of letting the agent try; use the bash tool for remote commands. Persistent shell tools remain local-only: a persistent tool pointed at a remote workspace refuses with the same error.
 - **`@` file references are not supported in remote sessions.** Typing `@` in a remote session yields a single explicit "not supported yet" candidate rather than a silent failure; the reference-source interface is reserved for a later phase.
-- **No mirror or sync layer.** Anchor directories hold metadata only, not file copies; every read and write crosses SSH, bounded by `maxFileBytes`.
+- **No mirror or sync layer.** Anchor directories hold metadata only, not file copies; every read and write crosses SSH, bounded by `maxFileBytes`. Uploads stream straight into a temp file per SFTP and publish by rename; there is no whole-project sync, no conflict resolution, and no local copy of the remote tree.
+- **The remote-file tab needs `dsh-better-sidebar`.** It is registered through that plugin's public `registerTab` service, so a profile without it simply has no tab (the settings section still works). This plugin never edits the sidebar's source or DOM.
+- **Forwards are loopback-only and local to the DSH host.** The URL works in a browser on the machine running DSH. Reaching it from another computer requires the operator's own tunnel — this plugin deliberately does not publish a remote service to a network.
+- **Forwards are not restored.** A forward opened by an agent disappears when the user closes it, the plugin unloads, or the harness restarts; reopen it rather than expecting a durable tunnel.
+- **Uploads have no resumable protocol.** One HTTP POST streams one file into SFTP; a dropped connection aborts that file (the published name is never left half-written), and there is no resume or multipart batching.
 - **Tree marking depends on in-box `data-files-*` hooks.** The recoloring targets the file tree's data attributes, which are not a declared public contract; a dsh rename silently drops the coloring (purely presentational — nothing else breaks). Workspace-row markers additionally match by workspace title: renaming a workspace, or a dsh change to the sidebar's `aria-label` copy, drops the row marker while the file-tree marker keeps working.
 - **Path aliasing depends on display structure.** The remote-path rewrite targets the tree root header's span shape and the hover card's portal shape, both undeclared; a dsh change to either silently leaves the local anchor path visible (purely presentational — navigation, addressing, and the copy action are untouched and still use the real local directory).
 - **Search needs a remote ripgrep.** The `rg` binary must exist on the remote machine (configurable via `remoteRipgrep`); otherwise search tools fail on remote paths.

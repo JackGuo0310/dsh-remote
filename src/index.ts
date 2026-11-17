@@ -37,6 +37,8 @@ import { RoutingBashExecutor, RoutingPwshExecutor } from './shell-router.ts'
 import { registerPrompt } from './prompt.ts'
 import { registerToolVisibility } from './tool-visibility.ts'
 import { registerRoutes } from './routes.ts'
+import { ForwardManager } from './forward.ts'
+import { registerForwardTools } from './tools.ts'
 
 export const name = '@jackguo0310/dsh-remote'
 
@@ -78,6 +80,11 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
   const world = new RemoteWorld(config)
   ctx.effect(() => () => world.dispose(), 'dsh-remote-development.world')
 
+  // On-demand port forwards: one loopback listener per open tunnel, owned by
+  // the plugin fiber so unloading it closes every listener.
+  const forwards = new ForwardManager(world, config.maxForwards)
+  ctx.effect(() => () => forwards.closeAll(), 'dsh-remote-development.forwards')
+
   new RoutingFileSystem(ctx, world, config.commandTimeoutMs, config.maxFileBytes, {
     cwd: process.cwd(),
     diffBasisMaxBytes: LOCAL_FS_DIFF_BASIS_MAX_BYTES,
@@ -116,7 +123,14 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
   registerPrompt(ctx, world)
   registerToolVisibility(ctx, world)
 
+  // The forwarding tools are optional: a composition without a tool registry
+  // (or with the tools service hidden) still serves the settings page and the
+  // file tab, so their absence must not fail the whole plugin load.
+  ctx.inject(['tools'], (toolCtx) => {
+    registerForwardTools(toolCtx, world, forwards)
+  })
+
   ctx.inject(['webServer'], (serviceCtx) => {
-    registerRoutes(serviceCtx, serviceCtx.webServer, world)
+    registerRoutes(serviceCtx, serviceCtx.webServer, world, forwards)
   })
 }

@@ -47,6 +47,7 @@ export interface ResolvedConfig {
   anchorRoot: string
   remoteRipgrep: string
   localPicker: LocalPickerMode
+  maxForwards: number
 }
 
 export const Config = z.object({
@@ -99,6 +100,12 @@ export const Config = z.object({
    * operator sitting at that display.
    */
   localPicker: z.union(['browse', 'native'] as const).default('browse'),
+  /**
+   * Ceiling on simultaneously open on-demand port forwards. Each one holds a
+   * loopback listener and an SSH channel, so the default keeps a runaway agent
+   * from accumulating tunnels.
+   */
+  maxForwards: z.number().step(1).min(1).max(64).default(8),
 })
 
 export type Config = ResolvedConfig

@@ -15,8 +15,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { PassThrough } from 'node:stream'
 import { RemoteWorld } from '../src/world.ts'
 import { registerRoutes } from '../src/routes.ts'
+import { ForwardManager } from '../src/forward.ts'
 import { makeKeyBlob } from '../src/hostkey.ts'
 import type { Config } from '../src/config.ts'
 import type { ClientChannel, SFTPWrapper, SshClientLike } from '../src/pool.ts'
@@ -44,6 +46,7 @@ function baseConfig(anchorRoot: string): Config {
     anchorRoot,
     remoteRipgrep: 'rg',
     localPicker: 'browse',
+    maxForwards: 8,
   }
 }
 
@@ -204,7 +207,7 @@ function fakeSftp(listings: Map<string, Listing>, mkdirs: string[]) {
 }
 
 /** A live HTTP server with the plugin's routes mounted, plus its base URL. */
-async function serve(world: RemoteWorld, pickerKind?: 'native' | 'browse'): Promise<{ url: string; close: () => Promise<void> }> {
+async function serve(world: RemoteWorld, pickerKind?: 'native' | 'browse', forwarder?: ForwardManager): Promise<{ url: string; close: () => Promise<void> }> {
   const registered: { dispose: () => void }[] = []
   const server: Server = createServer()
   const ctx = new Context()
@@ -229,7 +232,7 @@ async function serve(world: RemoteWorld, pickerKind?: 'native' | 'browse'): Prom
       return dispose
     },
   }
-  registerRoutes(ctx, webServer as never, world)
+  registerRoutes(ctx, webServer as never, world, forwarder ?? new ForwardManager(world))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = (server.address() as AddressInfo).port
   return {
@@ -652,6 +655,72 @@ test('a 本机 listing refusal carries the reason instead of failing the request
     assert.equal(((await home.json()) as Record<string, unknown>).ok, true)
   } finally {
     await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the remote-file tab lists files and directories, unlike the picker', async () => {
+  const listings = new Map<string, Listing>([['/srv/app', {
+    entries: [{ name: 'src', dir: true }, { name: 'README.md', dir: false }],
+  }]])
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-files-'))
+  const { factory } = scriptedWithSftp({ expectPassword: 'pw' }, listings)
+  const world = new RemoteWorld(baseConfig(root), factory)
+  const { url, close } = await serve(world)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.9.1', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+
+    const browsed = await post(`${url}/files/ls`, { machineId: id, path: '/srv/app' })
+    assert.equal(browsed.ok, true)
+    assert.equal(browsed.path, '/srv/app')
+    assert.equal(browsed.parent, '/srv')
+    const entries = browsed.entries as { name: string; dir: boolean; path: string; size?: number }[]
+    // Directories first, then files: the tab renders one sorted list.
+    assert.deepEqual(entries.map((e) => e.name), ['src', 'README.md'])
+    assert.equal(entries[0]!.dir, true)
+    assert.equal(entries[1]!.dir, false)
+    assert.equal(entries[1]!.path, '/srv/app/README.md')
+    assert.equal(entries[1]!.size, 0)
+
+    // The workspace picker still offers directories only; the two surfaces
+    // must not converge on one listing.
+    const picker = await post(`${url}/ls`, { machineId: id, path: '/srv/app' })
+    assert.deepEqual((picker.entries as { name: string }[]).map((e) => e.name), ['src'])
+  } finally {
+    await close()
+    world.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a port forward opened over HTTP is listed and closable', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rdv-fwd-'))
+  const { factory } = scripted({ expectPassword: 'pw' })
+  const world = new RemoteWorld(baseConfig(root), factory)
+  // The channel is an in-process echo: these routes never touch SSH here, and
+  // the listener/bridge/lifecycle is the production path.
+  const forwarder = new ForwardManager(world, 4, () => Promise.resolve(new PassThrough() as never))
+  const { url, close } = await serve(world, undefined, forwarder)
+  try {
+    const saved = await post(`${url}/machines`, { host: '10.0.9.2', port: 22, username: 'dev', password: 'pw' })
+    const id = (saved.machine as Record<string, unknown>).id as string
+
+    const opened = await post(`${url}/forwards`, { machineId: id, remotePort: 3000 })
+    assert.equal(opened.ok, true)
+    const forward = opened.forward as Record<string, unknown>
+    assert.match(String(forward.url), /^http:\/\/127\.0\.0\.1:\d+$/)
+    assert.equal(forward.remotePort, 3000)
+
+    const listed = await get(`${url}/forwards`)
+    assert.equal((listed.forwards as unknown[]).length, 1)
+
+    assert.equal((await post(`${url}/forwards/close`, { id: forward.id })).ok, true)
+    assert.equal(((await get(`${url}/forwards`)).forwards as unknown[]).length, 0)
+  } finally {
+    await close()
+    forwarder.closeAll()
     world.dispose()
     rmSync(root, { recursive: true, force: true })
   }

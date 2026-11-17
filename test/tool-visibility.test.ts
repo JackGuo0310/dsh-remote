@@ -29,6 +29,7 @@ function baseConfig(anchorRoot: string): Config {
     anchorRoot,
     remoteRipgrep: 'rg',
     localPicker: 'browse',
+    maxForwards: 8,
   }
 }
 
