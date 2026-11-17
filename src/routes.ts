@@ -16,6 +16,7 @@ import { ensureRemoteDirs, listRemoteDir, sftpCall, statPath } from './remote-io
 import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
+import { installedVersion } from './version.ts'
 
 const ROUTE_PREFIX = '/dsh-remote-development'
 const BODY_LIMIT_BYTES = 256 * 1024
@@ -536,7 +537,9 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
       path: `${ROUTE_PREFIX}/preferences`,
       handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         if (req.method === 'GET') {
-          return sendJson(res, 200, { localPicker: world.localPicker() })
+          // `version` rides the preferences read so the settings page can name
+          // the installed release without a second round trip.
+          return sendJson(res, 200, { localPicker: world.localPicker(), version: installedVersion() })
         }
         if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
         const body = await readJsonBody(req)

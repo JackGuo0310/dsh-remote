@@ -10,6 +10,7 @@ export const DICTIONARIES: ReadonlyArray<[locale: string, dict: Record<string, s
   ['zh', {
     'settings.title': '远程开发',
     'settings.intro': '通过 SSH 连接远程机器，把远程目录作为工作区。Agent 使用与本地完全相同的工具，由插件在后台翻译为远程执行。',
+    'settings.version': '当前版本 v{version}。',
     'settings.machines': '机器',
     'settings.noMachines': '还没有机器，点击下方按钮添加。',
     'settings.add': '添加机器',
@@ -99,6 +100,7 @@ export const DICTIONARIES: ReadonlyArray<[locale: string, dict: Record<string, s
   ['en', {
     'settings.title': 'Remote Development',
     'settings.intro': 'Connect to remote machines over SSH and use a remote directory as a workspace. The agent works with the exact same tools as a local workspace; the plugin translates execution to the remote host.',
+    'settings.version': 'Installed version v{version}.',
     'settings.machines': 'Machines',
     'settings.noMachines': 'No machines yet. Add one below.',
     'settings.add': 'Add machine',

@@ -21,7 +21,7 @@ export interface SettingsInjected {
   saveMachine: (machine: Record<string, unknown>) => Promise<{ machine: ClientMachine }>
   deleteMachine: (id: string) => Promise<{ ok: boolean }>
   testConnection: (machine: Record<string, unknown>) => Promise<ProbeResult>
-  getPreferences: () => Promise<{ localPicker: LocalPickerMode }>
+  getPreferences: () => Promise<{ localPicker: LocalPickerMode; version?: string }>
   setPreferences: (localPicker: LocalPickerMode) => Promise<{ ok: true; localPicker: LocalPickerMode }>
   /** Re-read the anchors and recolor the workspace tree's remote markers. */
   refreshTreeMark: () => Promise<void>
@@ -111,6 +111,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const [machineResults, setMachineResults] = useState<Record<string, { ok: boolean; text: string }>>({})
   const [localPicker, setLocalPicker] = useState<LocalPickerMode>('browse')
   const [pickerBusy, setPickerBusy] = useState(false)
+  // The installed release, read from the running package at request time — the
+  // settings page never hardcodes a number.
+  const [version, setVersion] = useState('')
   // On-demand forwards: live records plus the small add form.
   const [forwards, setForwards] = useState<ForwardInfo[]>([])
   const [forwardMachine, setForwardMachine] = useState('')
@@ -170,8 +173,10 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   }
 
   useEffect(() => {
-    void props.getPreferences().then((p) => setLocalPicker(p.localPicker))
-      .catch((err: Error) => setError(err.message))
+    void props.getPreferences().then((p) => {
+      setLocalPicker(p.localPicker)
+      if (typeof p.version === 'string') setVersion(p.version)
+    }).catch((err: Error) => setError(err.message))
   }, [props])
 
   /** Store the picked interaction and re-read the page so the dialog follows it. */
@@ -299,7 +304,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   }
 
   return createElement('div', { className: 'rdv-page' },
-    createElement('p', { className: 'rdv-intro' }, t('settings.intro')),
+    createElement('p', { className: 'rdv-intro' },
+      t('settings.intro'),
+      version === '' ? '' : ' ' + t('settings.version').replace('{version}', version)),
     createElement('div', { className: 'rdv-form' },
       createElement('div', { className: 'rdv-field' },
         createElement('span', { className: 'rdv-label' }, t('settings.localPicker')),

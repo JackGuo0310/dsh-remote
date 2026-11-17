@@ -248,7 +248,7 @@ export function pickerCapability(): Promise<{ kind: PickerKind }> {
 export type LocalPickerMode = 'browse' | 'native'
 
 /** Read the saved settings-page preferences. */
-export function getPreferences(): Promise<{ localPicker: LocalPickerMode }> {
+export function getPreferences(): Promise<{ localPicker: LocalPickerMode; version?: string }> {
   return call('GET', '/preferences')
 }
 
