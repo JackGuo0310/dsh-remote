@@ -145,6 +145,14 @@ body[data-ds-dark-theme] .rdv-code .hljs-link { color: #61afef; }
 .rdv-gitDiff { flex: 1; min-height: 0; margin: 0; padding: 8px 10px; overflow: auto; color: var(--dsw-alias-label-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 16px; white-space: pre; }
 .rdv-gitCommit { display: flex; align-items: center; gap: 6px; flex: none; padding: 8px 10px; border-top: 1px solid var(--dsw-alias-border-l3); }
 .rdv-gitCommit > :first-child { flex: 1; min-width: 0; }
+/* Remote-file row context menu. The backdrop is a full-viewport button so a
+   click anywhere (and Escape via the dialog host) dismisses the menu. */
+.rdv-ctxBackdrop { position: fixed; inset: 0; z-index: 50; margin: 0; padding: 0; border: none; background: transparent; cursor: default; }
+.rdv-ctxMenu { position: fixed; z-index: 51; min-width: 190px; padding: 4px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22); display: flex; flex-direction: column; gap: 1px; }
+.rdv-ctxItem { display: block; width: 100%; border: none; background: transparent; text-align: left; padding: 6px 10px; border-radius: 6px; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px; cursor: pointer; }
+.rdv-ctxItem:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.rdv-ctxDanger { color: var(--dsw-alias-state-error-primary); }
+.rdv-ctxSep { height: 1px; margin: 4px 6px; background: var(--dsw-alias-border-l4); }
 `
 
 /** Inject the stylesheet once (idempotent across plugin reloads). */

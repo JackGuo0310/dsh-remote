@@ -461,6 +461,86 @@ export async function deleteRemoteFile(
   return { before }
 }
 
+/** Limits on one recursive remote delete (a runaway tree must stop somewhere). */
+export interface DeleteBudget {
+  /** Entries that may be removed in total. */
+  entries: number
+  /** Directory nesting that may be descended. */
+  depth: number
+}
+
+/**
+ * Delete one remote path: a file, symlink, or special file is unlinked, and a
+ * directory is emptied first and then removed. Symlinks are never followed, so
+ * a link to a directory removes only the link. A target that is already gone
+ * reports the same stale-version failure the delete contract uses.
+ * @param sftp - the SFTP channel.
+ * @param p - remote path.
+ * @param signal - abort hook.
+ * @param timeoutMs - per-operation deadline.
+ * @param budget - entries and depth the recursion may consume.
+ */
+export async function deleteRemotePath(
+  sftp: SFTPWrapper,
+  p: string,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  budget: DeleteBudget = { entries: 10_000, depth: 64 },
+): Promise<void> {
+  const root = await lstatPath(sftp, p, signal, timeoutMs)
+  if (!root) throw new FsError(`cannot delete "${p}": it no longer exists`, 'FS_STALE_VERSION')
+  const remaining = { ...budget }
+  /**
+   * Remove one entry, descending into directories (children first).
+   * @param target - absolute remote path.
+   * @param type - the entry's type from lstat/readdir.
+   * @param depth - current recursion depth.
+   */
+  const remove = async (target: string, type: FsInfo['type'] | 'symlink', depth: number): Promise<void> => {
+    if (type !== 'directory') {
+      await sftpCall('unlink', signal, timeoutMs, (cb) => sftp.unlink(target, cb as never))
+      return
+    }
+    if (depth > remaining.depth) {
+      throw new FsError(`cannot delete "${p}": deeper than ${remaining.depth} directories`, 'FS_IO_ERROR')
+    }
+    const children = await listRemoteDir(sftp, target, signal, timeoutMs)
+    if (remaining.entries - children.length < 0) {
+      throw new FsError(`cannot delete "${p}": more than ${budget.entries} entries`, 'FS_IO_ERROR')
+    }
+    remaining.entries -= children.length
+    for (const child of children) {
+      await remove(target === '/' ? `/${child.name}` : `${target}/${child.name}`, child.type, depth + 1)
+    }
+    await sftpCall('rmdir', signal, timeoutMs, (cb) => sftp.rmdir(target, cb as never))
+  }
+  await remove(p, root.type, 0)
+}
+
+/**
+ * Rename one remote entry inside its machine without ever replacing a target:
+ * an existing destination is refused before the rename, so a typo cannot
+ * silently destroy a sibling.
+ * @param sftp - the SFTP channel.
+ * @param from - current remote path.
+ * @param to - new remote path (same machine).
+ * @param signal - abort hook.
+ * @param timeoutMs - per-operation deadline.
+ */
+export async function renameRemotePath(
+  sftp: SFTPWrapper,
+  from: string,
+  to: string,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  const source = await lstatPath(sftp, from, signal, timeoutMs)
+  if (!source) throw new FsError(`"${from}" was not found`, 'FS_NOT_FOUND')
+  const target = await lstatPath(sftp, to, signal, timeoutMs)
+  if (target) throw new FsError(`"${to}" already exists`, 'FS_ALREADY_EXISTS')
+  await sftpCall('rename', signal, timeoutMs, (cb) => sftp.rename(from, to, cb as never))
+}
+
 /**
  * Apply one literal edit to a remote text file with a version guard, sharing
  * one read-guard-write critical section per call (the seam owns ordering by

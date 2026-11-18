@@ -111,6 +111,16 @@ export function testConnection(machine: Record<string, unknown>): Promise<ProbeR
   return probe('/test', machine)
 }
 
+/** Rename one remote entry inside its directory (never replaces an existing name). */
+export function renameRemoteEntry(machineId: string, path: string, name: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+  return call('POST', '/files/rename', { machineId, path, name })
+}
+
+/** Delete one remote entry; a directory is removed with everything inside it. */
+export function deleteRemoteEntry(machineId: string, path: string): Promise<{ ok: boolean; error?: string }> {
+  return call('POST', '/files/delete', { machineId, path })
+}
+
 /** List one remote directory level. */
 export function listRemoteDir(machineId: string, path: string): Promise<{ ok: boolean; path: string; entries: RemoteEntry[]; error?: string }> {
   return call('POST', '/ls', { machineId, path })

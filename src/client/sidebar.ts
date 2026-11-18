@@ -63,6 +63,9 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
     writeRemoteFile: api.writeRemoteFile,
     uploadRemoteFile: api.uploadRemoteFile,
     remoteDownloadUrl: api.remoteDownloadUrl,
+    createRemoteDir: api.createRemoteDir,
+    renameRemoteEntry: api.renameRemoteEntry,
+    deleteRemoteEntry: api.deleteRemoteEntry,
     t,
   }
   const gitInjected: RemoteGitInjected = {

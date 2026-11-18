@@ -12,9 +12,9 @@
  * @module dsh-remote-development/client/remote-files
  */
 
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteFileEntry } from './api.ts'
 import { highlightCode, lineNumbers } from './code-highlight.ts'
@@ -28,6 +28,12 @@ export interface RemoteFilesInjected {
   writeRemoteFile: (machineId: string, path: string, text: string) => Promise<{ ok: boolean; path: string; size: number; error?: string }>
   uploadRemoteFile: (machineId: string, dir: string, file: File) => Promise<{ ok: boolean; path?: string }>
   remoteDownloadUrl: (machineId: string, path: string) => string
+  /** Create one child directory (the picker's own route). */
+  createRemoteDir: (machineId: string, path: string, name: string) => Promise<{ ok: boolean; path: string; error?: string }>
+  /** Rename one entry in place; refuses to replace an existing name. */
+  renameRemoteEntry: (machineId: string, path: string, name: string) => Promise<{ ok: boolean; path?: string; error?: string }>
+  /** Delete one entry; a directory is removed with everything inside it. */
+  deleteRemoteEntry: (machineId: string, path: string) => Promise<{ ok: boolean; error?: string }>
   /**
    * The sidebar's own file/folder artwork for a path, so this tab's rows use
    * the same icon theme (including icon-theme plugins) as the built-in tree.
@@ -69,6 +75,11 @@ const FILE_ICON = createElement('span', { className: 'rdv-filesIcon', 'aria-hidd
 const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|svg|bmp|ico)$/i
 
 
+/** A name the remote filesystem may accept as one path segment. */
+function isUsableName(name: string): boolean {
+  return name !== '' && name !== '.' && name !== '..' && !name.includes('/') && !name.includes('\\')
+}
+
 /** Human byte size; the list is dense, so one short token per file. */
 function sizeText(bytes: number | undefined): string {
   if (bytes === undefined) return ''
@@ -100,6 +111,18 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(0)
+  const [notice, setNotice] = useState('')
+
+  // ── row context menu + its dialogs ────────────────────────────────────────
+  /** Where the menu opened, and the row it targets (null = empty space). */
+  const [menu, setMenu] = useState<{ x: number; y: number; entry: RemoteFileEntry | null } | null>(null)
+  const [renameTarget, setRenameTarget] = useState<RemoteFileEntry | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<RemoteFileEntry | null>(null)
+  const [folderDialog, setFolderDialog] = useState(false)
+  const [folderName, setFolderName] = useState('')
+  const [dialogBusy, setDialogBusy] = useState(false)
+  const [dialogError, setDialogError] = useState('')
 
   // ── open file viewer ──────────────────────────────────────────────────────
   const [opened, setOpened] = useState<{ path: string; name: string } | null>(null)
@@ -117,6 +140,8 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   const token = useRef(0)
   const fileToken = useRef(0)
   const fileInput = useRef<HTMLInputElement | null>(null)
+  /** Directory the next picked upload goes to ('' = the current listing). */
+  const uploadDir = useRef('')
 
   const load = useCallback((machine: string, dir: string): void => {
     if (machine === '') return
@@ -197,14 +222,18 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   }, [draft, fileState, injected, machineId, opened, savedText, saving, t])
 
   const upload = useCallback((files: FileList | null): void => {
-    if (files === null || files.length === 0 || machineId === '' || path === '') return
+    // A folder row's "upload here" stages a target directory; the toolbar
+    // button uploads into the listing the operator is looking at.
+    const dir = uploadDir.current !== '' ? uploadDir.current : path
+    uploadDir.current = ''
+    if (files === null || files.length === 0 || machineId === '' || dir === '') return
     const list = Array.from(files)
     setUploading(list.length)
     setError('')
     void (async (): Promise<void> => {
       for (const file of list) {
         try {
-          await injected.uploadRemoteFile(machineId, path, file)
+          await injected.uploadRemoteFile(machineId, dir, file)
         } catch (err) {
           setError(`${file.name}: ${(err as Error).message}`)
         }
@@ -213,6 +242,117 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
       load(machineId, path)
     })()
   }, [injected, machineId, path, load])
+
+  /** Open the row menu at the pointer, clamped into the viewport. */
+  const openMenu = (e: React.MouseEvent, entry: RemoteFileEntry | null): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setNotice('')
+    setDialogError('')
+    const width = 210
+    const height = 240
+    setMenu({
+      x: Math.max(4, Math.min(e.clientX, window.innerWidth - width - 8)),
+      y: Math.max(4, Math.min(e.clientY, window.innerHeight - height - 8)),
+      entry,
+    })
+  }
+
+  /** Copy one path (or the current directory) to the clipboard. */
+  const copyPath = (entry: RemoteFileEntry | null): void => {
+    const text = entry?.path ?? path
+    setMenu(null)
+    if (typeof navigator === 'undefined' || navigator.clipboard === undefined) return
+    void navigator.clipboard.writeText(text).then(() => setNotice(t('files.pathCopied'))).catch(() => {
+      // A browser that refuses the clipboard leaves the path visible in the header.
+    })
+  }
+
+  const startRename = (entry: RemoteFileEntry): void => {
+    setMenu(null)
+    setDialogError('')
+    setRenameValue(entry.name)
+    setRenameTarget(entry)
+  }
+
+  const submitRename = (): void => {
+    if (renameTarget === null || dialogBusy) return
+    const name = renameValue.trim()
+    if (!isUsableName(name)) {
+      setDialogError(t('files.invalidName'))
+      return
+    }
+    setDialogBusy(true)
+    setDialogError('')
+    void injected.renameRemoteEntry(machineId, renameTarget.path, name).then((r) => {
+      setDialogBusy(false)
+      if (!r.ok) {
+        setDialogError(r.error ?? t('files.actionFailed'))
+        return
+      }
+      setRenameTarget(null)
+      setNotice(t('files.renamed'))
+      load(machineId, path)
+    }).catch((err: Error) => {
+      setDialogBusy(false)
+      setDialogError(err.message)
+    })
+  }
+
+  const startDelete = (entry: RemoteFileEntry): void => {
+    setMenu(null)
+    setDialogError('')
+    setDeleteTarget(entry)
+  }
+
+  const submitDelete = (): void => {
+    if (deleteTarget === null || dialogBusy) return
+    setDialogBusy(true)
+    setDialogError('')
+    void injected.deleteRemoteEntry(machineId, deleteTarget.path).then((r) => {
+      setDialogBusy(false)
+      if (!r.ok) {
+        setDialogError(r.error ?? t('files.actionFailed'))
+        return
+      }
+      setDeleteTarget(null)
+      setNotice(t('files.deleted'))
+      load(machineId, path)
+    }).catch((err: Error) => {
+      setDialogBusy(false)
+      setDialogError(err.message)
+    })
+  }
+
+  const submitFolder = (): void => {
+    const name = folderName.trim()
+    if (!isUsableName(name)) {
+      setDialogError(t('files.invalidName'))
+      return
+    }
+    setDialogBusy(true)
+    setDialogError('')
+    void injected.createRemoteDir(machineId, path, name).then((r) => {
+      setDialogBusy(false)
+      if (!r.ok) {
+        setDialogError(r.error ?? t('files.actionFailed'))
+        return
+      }
+      setFolderDialog(false)
+      setNotice(t('files.created'))
+      load(machineId, path)
+    }).catch((err: Error) => {
+      setDialogBusy(false)
+      setDialogError(err.message)
+    })
+  }
+
+  /** Stage an upload into one directory and open the picker. */
+  const uploadHere = (dir: string): void => {
+    setMenu(null)
+    uploadDir.current = dir
+    fileInput.current?.click()
+  }
 
   // Highlighting is only rebuilt for the read view (never per keystroke of the
   // editor): the preview shows the current draft, so an unsaved edit is visible
@@ -328,6 +468,15 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
     }
     return entry.dir ? FOLDER_ICON : FILE_ICON
   }
+  /** One row's context menu entry. */
+  const menuItem = (label: string, onClick: () => void, options: { danger?: boolean } = {}): ReactElement =>
+    createElement('button', {
+      type: 'button',
+      role: 'menuitem',
+      className: 'rdv-ctxItem' + (options.danger === true ? ' rdv-ctxDanger' : ''),
+      onClick,
+    }, label)
+
   const row = (entry: RemoteFileEntry): ReactElement => {
     if (entry.dir) {
       return createElement('button', {
@@ -336,6 +485,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
         className: 'rdv-filesRow',
         title: entry.path,
         onClick: () => load(machineId, entry.path),
+        onContextMenu: (e: React.MouseEvent) => openMenu(e, entry),
       },
         iconFor(entry),
         createElement('span', { className: 'rdv-filesName' }, entry.name),
@@ -347,6 +497,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
       className: 'rdv-filesRow',
       title: entry.path,
       onClick: () => openFile(entry),
+      onContextMenu: (e: React.MouseEvent) => openMenu(e, entry),
     },
       iconFor(entry),
       createElement('span', { className: 'rdv-filesName' }, entry.name),
@@ -385,12 +536,99 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
       },
     }),
     error !== '' && createElement('div', { className: 'rdv-filesError' }, error),
-    createElement('div', { className: 'rdv-filesList' },
+    notice !== '' && createElement('div', { className: 'rdv-ok rdv-filesNote' }, notice),
+    createElement('div', {
+      className: 'rdv-filesList',
+      // Right-clicking the empty area offers the directory-level actions.
+      onContextMenu: (e: React.MouseEvent) => openMenu(e, null),
+    },
       loading && entries.length === 0
         ? createElement('div', { className: 'rdv-empty' }, t('files.loading'))
         : entries.length === 0
           ? createElement('div', { className: 'rdv-empty' }, t('files.empty'))
           : entries.map(row)),
     createElement('div', { className: 'rdv-filesFoot' },
-      createElement('span', { className: 'rdv-filesMachine', title: machineId }, machineName || machineId)))
+      createElement('span', { className: 'rdv-filesMachine', title: machineId }, machineName || machineId)),
+    menu !== null && createElement(Fragment, null,
+      createElement('button', {
+        type: 'button',
+        className: 'rdv-ctxBackdrop',
+        'aria-label': t('files.cancel'),
+        onClick: () => setMenu(null),
+        onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); setMenu(null) },
+      }),
+      createElement('div', { className: 'rdv-ctxMenu', role: 'menu', style: { left: menu.x, top: menu.y } },
+        menu.entry === null
+          ? [
+              menuItem(t('files.newFolder'), () => {
+                setMenu(null)
+                setFolderName('')
+                setDialogError('')
+                setFolderDialog(true)
+              }),
+              menuItem(t('files.uploadHere'), () => uploadHere(path)),
+              createElement('div', { key: 'sep', className: 'rdv-ctxSep' }),
+              menuItem(t('files.refresh'), () => { setMenu(null); load(machineId, path) }),
+            ]
+          : [
+              menuItem(menu.entry.dir ? t('files.openFolder') : t('files.openFile'), () => {
+                const entry = menu.entry
+                setMenu(null)
+                if (entry === null) return
+                if (entry.dir) load(machineId, entry.path)
+                else openFile(entry)
+              }),
+              menu.entry.dir
+                ? menuItem(t('files.uploadIn'), () => { const entry = menu.entry; setMenu(null); if (entry !== null) uploadHere(entry.path) })
+                : menuItem(t('files.download'), () => { const entry = menu.entry; setMenu(null); if (entry !== null) download(entry.path) }),
+              menuItem(t('files.copyPath'), () => copyPath(menu.entry)),
+              createElement('div', { key: 'sep', className: 'rdv-ctxSep' }),
+              menuItem(t('files.rename'), () => { const entry = menu.entry; setMenu(null); if (entry !== null) startRename(entry) }),
+              menuItem(t('files.delete'), () => { const entry = menu.entry; setMenu(null); if (entry !== null) startDelete(entry) }, { danger: true }),
+            ])),
+    renameTarget !== null && createElement(Modal, {
+      open: true,
+      onClose: () => { if (!dialogBusy) { setRenameTarget(null); setDialogError('') } },
+      title: t('files.renameTitle'),
+      closeLabel: t('files.cancel'),
+      footer: createElement(Fragment, null,
+        createElement(Button, { variant: 'outline', disabled: dialogBusy, onClick: () => setRenameTarget(null) }, t('files.cancel')),
+        createElement(Button, { variant: 'primary', disabled: dialogBusy, onClick: submitRename }, t('files.confirm'))),
+    }, createElement('div', { className: 'rdv-field' },
+      createElement('span', { className: 'rdv-label' }, t('files.renameLabel')),
+      createElement(Input, {
+        value: renameValue,
+        autoFocus: true,
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => setRenameValue(e.target.value),
+        onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') submitRename() },
+      }),
+      dialogError !== '' && createElement('div', { className: 'rdv-error' }, dialogError))),
+    deleteTarget !== null && createElement(Modal, {
+      open: true,
+      onClose: () => { if (!dialogBusy) { setDeleteTarget(null); setDialogError('') } },
+      title: t('files.deleteTitle'),
+      closeLabel: t('files.cancel'),
+      description: t('files.deleteConfirm').replace('{name}', deleteTarget.name)
+        + (deleteTarget.dir ? ' ' + t('files.deleteDirWarning') : ''),
+      footer: createElement(Fragment, null,
+        createElement(Button, { variant: 'outline', disabled: dialogBusy, onClick: () => setDeleteTarget(null) }, t('files.cancel')),
+        createElement(Button, { variant: 'outline', disabled: dialogBusy, onClick: submitDelete }, t('files.confirm'))),
+    }, dialogError === '' ? null : createElement('p', { className: 'rdv-error', style: { margin: 0 } }, dialogError)),
+    folderDialog && createElement(Modal, {
+      open: true,
+      onClose: () => { if (!dialogBusy) { setFolderDialog(false); setDialogError('') } },
+      title: t('files.newFolderTitle'),
+      closeLabel: t('files.cancel'),
+      footer: createElement(Fragment, null,
+        createElement(Button, { variant: 'outline', disabled: dialogBusy, onClick: () => setFolderDialog(false) }, t('files.cancel')),
+        createElement(Button, { variant: 'primary', disabled: dialogBusy, onClick: submitFolder }, t('files.confirm'))),
+    }, createElement('div', { className: 'rdv-field' },
+      createElement('span', { className: 'rdv-label' }, t('files.newFolderLabel')),
+      createElement(Input, {
+        value: folderName,
+        autoFocus: true,
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => setFolderName(e.target.value),
+        onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') submitFolder() },
+      }),
+      dialogError !== '' && createElement('div', { className: 'rdv-error' }, dialogError))))
 }

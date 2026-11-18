@@ -12,7 +12,7 @@ import { RemoteWorld } from './world.ts'
 import type { SshPool } from './pool.ts'
 import type { MachineRef } from './world.ts'
 import type { ForwardManager } from './forward.ts'
-import { ensureRemoteDirs, listRemoteDir, publishRemoteFile, readRemoteText, sftpCall, statPath } from './remote-io.ts'
+import { deleteRemotePath, ensureRemoteDirs, listRemoteDir, publishRemoteFile, readRemoteText, renameRemotePath, sftpCall, statPath } from './remote-io.ts'
 import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
@@ -90,6 +90,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body)
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text) })
   res.end(text)
+}
+
+/**
+ * Whether a client-supplied name is one path segment: no separators, no
+ * traversal, no NUL. Upload and rename both go through this, so neither can
+ * address a different directory than the one the operator is looking at.
+ * @param name - the candidate name.
+ * @returns true when it may be used as a file/folder name.
+ */
+function isSingleSegment(name: string): boolean {
+  return name !== '' && name !== '.' && name !== '..'
+    && !name.includes('/') && !name.includes('\\') && !name.includes('\u0000')
 }
 
 /**
@@ -899,6 +911,53 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
           req.pipe(file)
         } catch (err) {
           req.resume()
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/rename`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const from = normalizeRemotePath(String(body.path ?? ''))
+        const name = String(body.name ?? '').trim()
+        if (!from.startsWith('/')) return sendJson(res, 400, { ok: false, error: 'an absolute remote path is required' })
+        if (!isSingleSegment(name)) return sendJson(res, 400, { ok: false, error: 'a single new name is required' })
+        const cut = from.lastIndexOf('/')
+        const to = (cut <= 0 ? '' : from.slice(0, cut)) + '/' + name
+        try {
+          const sftp = await world.sftpOn(ref, `rename ${from} -> ${to}`)
+          await renameRemotePath(sftp, from, to, undefined, world.config.commandTimeoutMs)
+          return sendJson(res, 200, { ok: true, path: to })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/files/delete`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = normalizeRemotePath(String(body.path ?? ''))
+        if (!target.startsWith('/')) return sendJson(res, 400, { ok: false, error: 'an absolute remote path is required' })
+        // The filesystem root is never a delete target, even with a
+        // confirmation in front of it.
+        if (target === '/') return sendJson(res, 400, { ok: false, error: 'refusing to delete the remote root' })
+        try {
+          const sftp = await world.sftpOn(ref, `delete ${target}`)
+          await deleteRemotePath(sftp, target, undefined, world.config.commandTimeoutMs)
+          return sendJson(res, 200, { ok: true })
+        } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })
         }
       },
