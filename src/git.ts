@@ -116,6 +116,84 @@ export function gitCommitCommand(root: string): string {
   return `git ${dir(root)} commit --quiet -F -`
 }
 
+/** One commit from the log view. */
+export interface GitCommit {
+  /** Full object hash (used to ask for the diff). */
+  hash: string
+  /** Abbreviated hash for the row. */
+  short: string
+  author: string
+  /** Seconds since the epoch (git's `--date=unix`). */
+  time: number
+  /** Ref names pointing at this commit, as `%D` prints them. */
+  refs: string[]
+  subject: string
+}
+
+/** Rows the log view asks for in one call. */
+export const GIT_LOG_LIMIT = 100
+
+/** Field/record separators that cannot occur in a commit message. */
+const FIELD = '\u001f'
+const RECORD = '\u001e'
+
+/**
+ * The commit history, newest first, one line per commit with unit/record
+ * separators so a subject containing any printable character stays intact.
+ * @param root - repository root on the remote machine.
+ * @param limit - commits to ask for.
+ * @returns the command line.
+ */
+export function gitLogCommand(root: string, limit: number = GIT_LOG_LIMIT): string {
+  const count = Math.max(1, Math.min(1000, Math.trunc(limit)))
+  return `git ${dir(root)} --no-pager log -n ${count} --date=unix --pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%s%x1e`
+}
+
+/**
+ * One commit's metadata plus patch.
+ * @param root - repository root.
+ * @param commit - a validated object hash.
+ * @returns the command line.
+ */
+export function gitShowCommand(root: string, commit: string): string {
+  return `git ${dir(root)} --no-pager show --no-color --stat --patch ${q(commit)}`
+}
+
+/**
+ * Parse {@link gitLogCommand}'s output.
+ * @param raw - the command's stdout.
+ * @returns the commits, newest first.
+ */
+export function parseGitLog(raw: string): GitCommit[] {
+  const commits: GitCommit[] = []
+  for (const record of raw.split(RECORD)) {
+    const trimmed = record.replace(/^\s+/, '')
+    if (trimmed === '') continue
+    const [hash = '', short = '', author = '', at = '', refs = '', subject = ''] = trimmed.split(FIELD)
+    const time = Number.parseInt(at, 10)
+    if (hash === '') continue
+    commits.push({
+      hash,
+      short: short || hash.slice(0, 7),
+      author,
+      time: Number.isFinite(time) ? time : 0,
+      refs: refs.split(',').map((ref) => ref.trim()).filter((ref) => ref !== ''),
+      subject,
+    })
+  }
+  return commits
+}
+
+/**
+ * Validate a commit hash from the client before it reaches a command line.
+ * @param value - the raw value.
+ * @returns the hash, or null when it is not a hash.
+ */
+export function safeCommitHash(value: unknown): string | null {
+  const hash = String(value ?? '').trim()
+  return /^[0-9a-f]{4,64}$/i.test(hash) ? hash : null
+}
+
 /**
  * Parse `git status --porcelain=v1 -z --branch` output.
  * @param raw - NUL-separated status output.

@@ -153,6 +153,16 @@ body[data-ds-dark-theme] .rdv-code .hljs-link { color: #61afef; }
 .rdv-ctxItem:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .rdv-ctxDanger { color: var(--dsw-alias-state-error-primary); }
 .rdv-ctxSep { height: 1px; margin: 4px 6px; background: var(--dsw-alias-border-l4); }
+/* Remote Git: changes/history switcher and commit rows. */
+.rdv-gitTabs { display: flex; align-items: center; gap: 2px; flex: none; padding: 4px 10px 6px; border-bottom: 1px solid var(--dsw-alias-border-l4); }
+.rdv-gitTab { border: none; background: transparent; border-radius: 6px; padding: 4px 10px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; cursor: pointer; }
+.rdv-gitTab:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.rdv-gitTabActive { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font-weight: 510; }
+.rdv-gitRowOpen { background: var(--dsw-alias-interactive-bg-hover); }
+.rdv-gitBadgeCommit { font-size: 10px; }
+.rdv-gitSubject { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.rdv-gitRef { flex: none; padding: 0 5px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 14px; }
+.rdv-gitMeta { flex: none; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
 `
 
 /** Inject the stylesheet once (idempotent across plugin reloads). */

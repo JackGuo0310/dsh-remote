@@ -332,6 +332,30 @@ export async function checkEnvironment(machineId: string, refresh = true): Promi
   }
 }
 
+/** One commit from the remote repository's history. */
+export interface RemoteGitCommit {
+  /** Full object hash. */
+  hash: string
+  /** Abbreviated hash for the row. */
+  short: string
+  author: string
+  /** Seconds since the epoch. */
+  time: number
+  /** Ref names pointing at this commit. */
+  refs: string[]
+  subject: string
+}
+
+/** Read the remote repository's commit history, newest first. */
+export function gitLog(machineId: string, path: string, limit?: number): Promise<{ ok: boolean; commits?: RemoteGitCommit[]; root?: string; isRepo?: boolean; error?: string }> {
+  return gitPost('/git/log', { machineId, path, ...(limit === undefined ? {} : { limit }) })
+}
+
+/** Read one commit's metadata and patch. */
+export function gitShow(machineId: string, path: string, commit: string): Promise<{ ok: boolean; diff?: string; error?: string }> {
+  return gitPost('/git/show', { machineId, path, commit })
+}
+
 /** One changed path in a remote repository. */
 export interface RemoteGitEntry {
   /** Path relative to the repository root. */

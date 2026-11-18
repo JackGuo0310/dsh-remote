@@ -75,6 +75,8 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
     gitStage: api.gitStage,
     gitUnstage: api.gitUnstage,
     gitCommit: api.gitCommit,
+    gitLog: api.gitLog,
+    gitShow: api.gitShow,
     t,
   }
   const injectable = ctx as unknown as InjectableContext

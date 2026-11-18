@@ -16,7 +16,7 @@ import { deleteRemotePath, ensureRemoteDirs, listRemoteDir, publishRemoteFile, r
 import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
-import { gitCommitCommand, gitDiffCommand, gitRootCommand, gitStageCommand, gitStatusCommand, gitUnstageCommand, parsePorcelainV1Z, safeGitPath, safeRemoteDir } from './git.ts'
+import { gitCommitCommand, gitDiffCommand, gitLogCommand, gitRootCommand, gitShowCommand, gitStageCommand, gitStatusCommand, gitUnstageCommand, parseGitLog, parsePorcelainV1Z, safeCommitHash, safeGitPath, safeRemoteDir } from './git.ts'
 import { installedVersion } from './version.ts'
 
 const ROUTE_PREFIX = '/dsh-remote-development'
@@ -553,6 +553,59 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
           const result = await world.execOn(ref, gitCommitCommand(root), { timeoutMs: world.config.commandTimeoutMs, stdin: message })
           if (result.code !== 0) return sendJson(res, 200, { ok: false, error: result.stderr.trim() || result.stdout.trim() || `git commit exited ${String(result.code)}` })
           return sendJson(res, 200, { ok: true, output: result.stdout.trim() })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/log`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        if (target === null) return sendJson(res, 400, { ok: false, error: 'path must be a remote directory under a workspace anchor' })
+        const limit = Number.isFinite(Number(body.limit)) ? Number(body.limit) : 100
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: true, commits: [], isRepo: false })
+          const result = await world.execOn(ref, gitLogCommand(root, limit), { timeoutMs: world.config.commandTimeoutMs })
+          if (result.code !== 0) {
+            // An unborn branch has no history to show; that is an empty log,
+            // not a failure of the remote command.
+            if (/does not have any commits yet|unknown revision/i.test(result.stderr)) {
+              return sendJson(res, 200, { ok: true, commits: [], root })
+            }
+            return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `git log exited ${String(result.code)}` })
+          }
+          return sendJson(res, 200, { ok: true, commits: parseGitLog(result.stdout), root })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/show`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        const commit = safeCommitHash(body.commit)
+        if (target === null || commit === null) return sendJson(res, 400, { ok: false, error: 'a remote workspace directory and a commit hash are required' })
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: false, error: 'this workspace is not inside a git repository' })
+          const result = await world.execOn(ref, gitShowCommand(root, commit), { timeoutMs: world.config.commandTimeoutMs })
+          if (result.code !== 0) return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `git show exited ${String(result.code)}` })
+          return sendJson(res, 200, { ok: true, diff: result.stdout })
         } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })
         }

@@ -10,11 +10,15 @@ import {
   GIT_STATUS_LIMIT,
   gitCommitCommand,
   gitDiffCommand,
+  gitLogCommand,
   gitRootCommand,
+  gitShowCommand,
   gitStageCommand,
   gitStatusCommand,
   gitUnstageCommand,
+  parseGitLog,
   parsePorcelainV1Z,
+  safeCommitHash,
   safeGitPath,
   safeRemoteDir,
 } from '../src/git.ts'
@@ -88,6 +92,48 @@ test('a huge status stops at the cap and says so', () => {
   const parsed = parsePorcelainV1Z(rows.join('\u0000') + '\u0000')
   assert.equal(parsed.entries.length, GIT_STATUS_LIMIT)
   assert.equal(parsed.truncated, true)
+})
+
+test('the log asks for a bounded, separator-delimited history', () => {
+  const command = gitLogCommand('/repo', 50)
+  assert.match(command, /^git -C '\/repo' --no-pager log -n 50 --date=unix --pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%s%x1e$/)
+  // The limit is clamped, so a client cannot ask for the entire history.
+  assert.match(gitLogCommand('/repo', 100000), /log -n 1000 /)
+  assert.match(gitLogCommand('/repo', 0), /log -n 1 /)
+})
+
+test('a show only accepts a validated hash and prints one commit', () => {
+  assert.equal(gitShowCommand('/repo', 'abc123'), "git -C '/repo' --no-pager show --no-color --stat --patch 'abc123'")
+})
+
+test('the log parser keeps subjects and refs intact across records', () => {
+  const raw = [
+    'e1f2...full1\u001fabc123\u001fAlice\u001f1700000000\u001fHEAD -> main, origin/main\u001fa subject; with "punctuation"\u001e',
+    'dead...full2\u001fdef456\u001fBob\u001f1699999999\u001f\u001fsecond\u001e',
+  ].join('')
+  const commits = parseGitLog(raw)
+  assert.equal(commits.length, 2)
+  assert.equal(commits[0]!.hash, 'e1f2...full1')
+  assert.equal(commits[0]!.short, 'abc123')
+  assert.equal(commits[0]!.author, 'Alice')
+  assert.equal(commits[0]!.time, 1_700_000_000)
+  assert.deepEqual(commits[0]!.refs, ['HEAD -> main', 'origin/main'])
+  assert.equal(commits[0]!.subject, 'a subject; with "punctuation"')
+  assert.deepEqual(commits[1]!.refs, [])
+  assert.equal(commits[1]!.subject, 'second')
+  // Empty separators (git's trailing newline) produce no phantom commits.
+  assert.deepEqual(parseGitLog('\u001e'), [])
+  assert.deepEqual(parseGitLog(''), [])
+})
+
+test('a commit identifier from the client must look like a hash', () => {
+  assert.equal(safeCommitHash('abc123'), 'abc123')
+  assert.equal(safeCommitHash('  A1B2C3D4  '), 'A1B2C3D4')
+  assert.equal(safeCommitHash('HEAD'), null)
+  assert.equal(safeCommitHash('main; rm -rf /'), null)
+  assert.equal(safeCommitHash('$(id)'), null)
+  assert.equal(safeCommitHash(''), null)
+  assert.equal(safeCommitHash('abc'), null, 'three characters is not a git abbreviation')
 })
 
 test('client paths are rejected when a shell or a path boundary would carry them', () => {
