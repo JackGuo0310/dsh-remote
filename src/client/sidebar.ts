@@ -30,6 +30,9 @@ interface SidebarTabLike {
 /** The subset of `ctx.betterSidebar` this registration uses. */
 interface BetterSidebarLike {
   registerTab(tab: SidebarTabLike): () => void
+  /** The sidebar's own file artwork (feature `fileIcons`, v0.19.0+). */
+  fileIcon?(path: string, size: number): unknown
+  folderIcon?(path: string, open: boolean, size: number): unknown
 }
 
 /** A context that can wait for an optional service and scope effects to it. */
@@ -62,6 +65,18 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
   }
   const injectable = ctx as unknown as InjectableContext
   injectable.inject(['betterSidebar'], (scope) => {
+    const sidebar = scope.betterSidebar
+    // Rows use the sidebar's icon chain when the host version exposes it, so an
+    // installed icon theme restyles this tab too; older hosts just get the
+    // plugin's plain glyphs.
+    const icons = {
+      ...(typeof sidebar.fileIcon === 'function'
+        ? { fileIcon: (path: string, size: number) => sidebar.fileIcon?.(path, size) }
+        : {}),
+      ...(typeof sidebar.folderIcon === 'function'
+        ? { folderIcon: (path: string, open: boolean, size: number) => sidebar.folderIcon?.(path, open, size) }
+        : {}),
+    }
     const dispose = scope.betterSidebar.registerTab({
       id: 'dsh-remote:files',
       title: () => t('files.tabTitle'),
@@ -70,7 +85,7 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
       single: true,
       component: ({ scope: sessionScope }) => createElement(RemoteFiles, {
         sessionId: sessionScope.sessionId,
-        injected,
+        injected: { ...injected, ...icons },
       }),
     })
     // Tying the disposer to this fiber means unloading either plugin removes

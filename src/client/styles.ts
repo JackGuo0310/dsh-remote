@@ -82,6 +82,36 @@ body[data-ds-dark-theme] .rdv-select { color-scheme: dark; }
 .rdv-filesImage { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; align-items: flex-start; justify-content: center; }
 .rdv-filesImage img { max-width: 100%; height: auto; }
 .rdv-filesNote { flex: none; padding: 4px 10px; border-top: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
+/* Read view. One scrolling surface holds a sticky gutter and the highlighted
+   source; both share the same 18px line grid, so numbers stay aligned. The
+   token colors are the sidebar's one-light / one-dark syntax families, so this
+   view reads like its CodeMirror editor. */
+.rdv-codeWrap { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start; }
+.rdv-codeGutter { position: sticky; left: 0; z-index: 1; flex: none; padding: 8px 8px 8px 10px; text-align: right; white-space: pre; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-1); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 18px; user-select: none; }
+.rdv-code { margin: 0; padding: 8px 12px 8px 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 18px; tab-size: 2; color: var(--dsw-alias-label-primary); white-space: pre; }
+.rdv-code code { font: inherit; color: inherit; }
+.rdv-code .hljs-comment, .rdv-code .hljs-quote { color: #a0a1a7; font-style: italic; }
+.rdv-code .hljs-keyword, .rdv-code .hljs-literal, .rdv-code .hljs-selector-tag, .rdv-code .hljs-doctag { color: #a626a4; }
+.rdv-code .hljs-string, .rdv-code .hljs-regexp, .rdv-code .hljs-addition { color: #50a14f; }
+.rdv-code .hljs-number, .rdv-code .hljs-symbol, .rdv-code .hljs-bullet { color: #986801; }
+.rdv-code .hljs-title, .rdv-code .hljs-section, .rdv-code .hljs-name { color: #0184bc; }
+.rdv-code .hljs-type, .rdv-code .hljs-built_in, .rdv-code .hljs-class .hljs-title { color: #c18401; }
+.rdv-code .hljs-attr, .rdv-code .hljs-attribute, .rdv-code .hljs-variable, .rdv-code .hljs-template-variable { color: #e45649; }
+.rdv-code .hljs-meta, .rdv-code .hljs-selector-id, .rdv-code .hljs-selector-class { color: #0997b3; }
+.rdv-code .hljs-deletion { color: #e45649; }
+.rdv-code .hljs-link { color: #4078f2; }
+.rdv-code .hljs-emphasis { font-style: italic; }
+.rdv-code .hljs-strong { font-weight: 600; }
+body[data-ds-dark-theme] .rdv-code .hljs-comment, body[data-ds-dark-theme] .rdv-code .hljs-quote { color: #5c6370; }
+body[data-ds-dark-theme] .rdv-code .hljs-keyword, body[data-ds-dark-theme] .rdv-code .hljs-literal, body[data-ds-dark-theme] .rdv-code .hljs-selector-tag, body[data-ds-dark-theme] .rdv-code .hljs-doctag { color: #c678dd; }
+body[data-ds-dark-theme] .rdv-code .hljs-string, body[data-ds-dark-theme] .rdv-code .hljs-regexp, body[data-ds-dark-theme] .rdv-code .hljs-addition { color: #98c379; }
+body[data-ds-dark-theme] .rdv-code .hljs-number, body[data-ds-dark-theme] .rdv-code .hljs-symbol, body[data-ds-dark-theme] .rdv-code .hljs-bullet { color: #d19a66; }
+body[data-ds-dark-theme] .rdv-code .hljs-title, body[data-ds-dark-theme] .rdv-code .hljs-section, body[data-ds-dark-theme] .rdv-code .hljs-name { color: #61afef; }
+body[data-ds-dark-theme] .rdv-code .hljs-type, body[data-ds-dark-theme] .rdv-code .hljs-built_in, body[data-ds-dark-theme] .rdv-code .hljs-class .hljs-title { color: #e5c07b; }
+body[data-ds-dark-theme] .rdv-code .hljs-attr, body[data-ds-dark-theme] .rdv-code .hljs-attribute, body[data-ds-dark-theme] .rdv-code .hljs-variable, body[data-ds-dark-theme] .rdv-code .hljs-template-variable { color: #e06c75; }
+body[data-ds-dark-theme] .rdv-code .hljs-meta, body[data-ds-dark-theme] .rdv-code .hljs-selector-id, body[data-ds-dark-theme] .rdv-code .hljs-selector-class { color: #56b6c2; }
+body[data-ds-dark-theme] .rdv-code .hljs-deletion { color: #e06c75; }
+body[data-ds-dark-theme] .rdv-code .hljs-link { color: #61afef; }
 .rdv-filesError { padding: 6px 10px; color: var(--dsw-alias-state-error-primary); font-size: 11px; line-height: 16px; word-break: break-word; }
 .rdv-filesFoot { flex: none; padding: 5px 10px; border-top: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rdv-filesMachine { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }

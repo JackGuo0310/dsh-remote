@@ -12,11 +12,12 @@
  * @module dsh-remote-development/client/remote-files
  */
 
-import { createElement, useCallback, useEffect, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteFileEntry } from './api.ts'
+import { highlightCode, lineNumbers } from './code-highlight.ts'
 
 /** Host calls the tab needs, bound once by the plugin (keeps props referentially stable). */
 export interface RemoteFilesInjected {
@@ -26,6 +27,14 @@ export interface RemoteFilesInjected {
   writeRemoteFile: (machineId: string, path: string, text: string) => Promise<{ ok: boolean; path: string; size: number; error?: string }>
   uploadRemoteFile: (machineId: string, dir: string, file: File) => Promise<{ ok: boolean; path?: string }>
   remoteDownloadUrl: (machineId: string, path: string) => string
+  /**
+   * The sidebar's own file/folder artwork for a path, so this tab's rows use
+   * the same icon theme (including icon-theme plugins) as the built-in tree.
+   * Undefined when the service cannot answer; the row then falls back to the
+   * plugin's plain glyphs.
+   */
+  fileIcon?: (path: string, size: number) => unknown
+  folderIcon?: (path: string, open: boolean, size: number) => unknown
   t: Translate
 }
 
@@ -98,6 +107,8 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   const [fileSize, setFileSize] = useState<number | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [saveNote, setSaveNote] = useState('')
+  /** Text files open as a highlighted read view; editing is an explicit step. */
+  const [editing, setEditing] = useState(false)
 
   // Monotonic tokens: a slow listing/file read must not overwrite a newer one.
   const token = useRef(0)
@@ -158,6 +169,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
     const mine = ++fileToken.current
     setOpened({ path: entry.path, name: entry.name })
     setFileState('loading')
+    setEditing(false)
     setFileError('')
     setSaveNote('')
     setSavedText('')
@@ -230,6 +242,17 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   }
 
   const dirty = fileState === 'ready' && draft !== savedText
+  // Highlighting is only rebuilt for the read view (never per keystroke of the
+  // editor): the preview shows the current draft, so an unsaved edit is visible
+  // the moment the operator switches back.
+  const highlighted = useMemo(
+    () => (opened !== null && fileState === 'ready' && !editing ? highlightCode(draft, opened.name) : ''),
+    [draft, editing, fileState, opened],
+  )
+  const gutter = useMemo(
+    () => (opened !== null && fileState === 'ready' && !editing ? lineNumbers(draft) : ''),
+    [draft, editing, fileState, opened],
+  )
   const download = (target: string): void => {
     const anchor = document.createElement('a')
     anchor.href = injected.remoteDownloadUrl(machineId, target)
@@ -255,18 +278,26 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
             alt: opened.name,
           }))
       }
-      return createElement('textarea', {
-        className: 'rdv-filesEditor',
-        value: draft,
-        spellCheck: false,
-        onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => { setDraft(e.target.value); setSaveNote('') },
-        onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-            e.preventDefault()
-            saveFile()
-          }
-        },
-      })
+      if (editing) {
+        return createElement('textarea', {
+          className: 'rdv-filesEditor',
+          value: draft,
+          spellCheck: false,
+          onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => { setDraft(e.target.value); setSaveNote('') },
+          onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+              e.preventDefault()
+              saveFile()
+            }
+          },
+        })
+      }
+      // The walking view: one scrolling surface holds a sticky line-number
+      // gutter and the highlighted source, so both share a line grid.
+      return createElement('div', { className: 'rdv-codeWrap' },
+        createElement('div', { className: 'rdv-codeGutter', 'aria-hidden': true }, gutter),
+        createElement('pre', { className: 'rdv-code' },
+          createElement('code', { dangerouslySetInnerHTML: { __html: highlighted } })))
     })()
 
     return createElement('div', { className: 'rdv-files' },
@@ -276,7 +307,12 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
           createElement('span', { className: 'rdv-filesViewerName', title: opened.path }, opened.name),
           createElement('span', { className: 'rdv-filesSize' }, sizeText(fileSize)),
           createElement(Button, { size: 'sm', onClick: () => download(opened.path) }, t('files.download')),
-          fileState === 'ready' && createElement(Button, {
+          fileState === 'ready' && !IMAGE_EXTENSIONS.test(opened.name) && createElement(Button, {
+            size: 'sm',
+            variant: 'outline',
+            onClick: () => { setEditing(!editing); setSaveNote('') },
+          }, editing ? t('files.preview') : t('files.edit')),
+          fileState === 'ready' && editing && createElement(Button, {
             size: 'sm',
             variant: 'primary',
             disabled: !dirty || saving,
@@ -287,6 +323,24 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   }
 
   const canGoUp = parent !== null && path !== ''
+  /**
+   * The row icon: the sidebar's own artwork when the service answers, the
+   * plugin's plain glyph otherwise. The lookup is per row, so an icon-theme
+   * plugin installed in the sidebar restyles this tab too.
+   */
+  const iconFor = (entry: RemoteFileEntry): ReactElement => {
+    try {
+      const custom = entry.dir
+        ? injected.folderIcon?.(entry.path, false, 14)
+        : injected.fileIcon?.(entry.path, 14)
+      if (custom !== undefined && custom !== null) {
+        return createElement('span', { className: 'rdv-filesIcon' }, custom as ReactElement)
+      }
+    } catch {
+      // A throwing icon provider must never take the listing down.
+    }
+    return entry.dir ? FOLDER_ICON : FILE_ICON
+  }
   const row = (entry: RemoteFileEntry): ReactElement => {
     if (entry.dir) {
       return createElement('button', {
@@ -296,7 +350,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
         title: entry.path,
         onClick: () => load(machineId, entry.path),
       },
-        FOLDER_ICON,
+        iconFor(entry),
         createElement('span', { className: 'rdv-filesName' }, entry.name),
         createElement('span', { className: 'rdv-filesGlyph', 'aria-hidden': true }, '›'))
     }
@@ -307,7 +361,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
       title: entry.path,
       onClick: () => openFile(entry),
     },
-      FILE_ICON,
+      iconFor(entry),
       createElement('span', { className: 'rdv-filesName' }, entry.name),
       createElement('span', { className: 'rdv-filesSize' }, sizeText(entry.size)))
   }
