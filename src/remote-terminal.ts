@@ -106,7 +106,8 @@ export function remoteTerminalCommand(remotePath: string, spec: SubprocessTermin
     '  __rdv_path=$PWD',
     '  case $__rdv_path in "$HOME") __rdv_path=\'~\';; "$HOME"/*) __rdv_path=~${__rdv_path#"$HOME"};; esac',
     '  PS1="\\[\\033[1;32m\\]${USER:-$(id -un 2>/dev/null)}@${__rdv_host}\\[\\033[0m\\]:'
-      + '\\[\\033[1;36m\\]${__rdv_path}\\[\\033[0m\\]'
+      // One visible space before the marker keeps typed input off the path.
+      + '\\[\\033[1;36m\\]${__rdv_path}\\[\\033[0m\\] '
       // The whole marker + controlled token sits inside one readline
       // non-printing region, and the cursor steps back over the token's cells:
       // the token is emitted (the host emulator must read `dsh> ` there) but

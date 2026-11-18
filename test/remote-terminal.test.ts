@@ -92,6 +92,7 @@ test('the bootstrap cd-guards, records its pid, and loads the machine profile', 
   assert.match(fn, /\\033\[1;32m\\]/, 'the prompt shows user@host in color')
   assert.match(fn, /\\033\[1;36m\\]/, 'and the working directory')
   assert.ok(fn.indexOf('${__rdv_path}') < fn.indexOf(']133;D;'), 'the path precedes the marker on the same line')
+  assert.ok(fn.includes('${__rdv_path}\\[\\033[0m\\] '), 'a visible space separates the path from typed input')
   assert.ok(fn.includes(']133;D;${__rdv_status}'), 'the marker carries the last exit status')
   // Marker and controlled token live inside ONE readline non-printing region,
   // and the cursor steps back over the token's cells: the emulator reads
