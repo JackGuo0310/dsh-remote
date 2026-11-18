@@ -6,10 +6,14 @@
  * (a POSIX host runs the bash backend, a Windows host runs the same package in
  * pwsh mode). SSH gives us a byte pipe, not a pty driver, so the branch starts
  * the remote shell with one bootstrap line that:
+ *   • loads the machine's own login configuration first (`/etc/profile`, then
+ *     the user's profile), so aliases (`ls` colors), PATH additions, and shell
+ *     options behave like the machine's terminal instead of a bare shell;
  *   • exports a prompt and a `PROMPT_COMMAND` emitting the OSC 133;D marker the
  *     backend's emulator reads as "shell is ready for input" — the same marker
  *     the pwsh prompt setup writes, so the bash-dialect and pwsh-dialect
- *     backends both see readiness;
+ *     backends both see readiness. Both are set AFTER the profile chain, which
+ *     would otherwise replace them;
  *   • records the shell's PID, so a signal can reach its PROCESS GROUP; every
  *     later command the operator runs is text on the same pty.
  *
@@ -69,20 +73,43 @@ const PWSH_SETUP = /\[Console\]::OutputEncoding|function\s+prompt\s*\{/
  * @param pidFile - remote file the shell writes its own PID into.
  * @returns the command line for the pty exec channel.
  */
-export function remoteTerminalCommand(remotePath: string, spec: SubprocessTerminalSpawnSpec, pidFile: string): string {
+export function remoteTerminalCommand(remotePath: string, spec: SubprocessTerminalSpawnSpec, pidFile: string, rcFile: string): string {
   const lines = [
     `cd ${shq(remotePath)} || { echo ${shq(`cannot use remote working directory ${remotePath}`)} >&2; exit 125; }`,
     `echo $$ > ${shq(pidFile)}`,
-    // The emulator reads OSC 133;D;<exit-status> as "command finished, prompt
-    // shown": the same readiness signal the pwsh setup line writes.
-    `export PS1=${shq('dsh> ')}`,
-    `export PROMPT_COMMAND=${shq('printf "\\033]133;D;%s\\007" "$?"')}`,
     `export TERM=${shq(spec.terminalType === 'dumb' ? 'xterm-256color' : spec.terminalType)}`,
-    // Ordinary environment entries the backend carried for this session.
+    // Ordinary environment entries the backend carried for this session, before
+    // the profile runs: the operator's own profile may extend them.
     ...Object.entries(spec.env ?? {})
       .filter((entry): entry is [string, string] => entry[1] !== undefined)
       .map(([key, value]) => `export ${key}=${shq(value)}`),
-    'exec bash --noprofile --norc -i',
+    // The shell loads the machine's login/interactive configuration the way an
+    // interactive login shell would — `--rcfile` replaces every built-in rc, so
+    // the file does the chain itself. That is what makes aliases (`ls` colors),
+    // PATH additions, and shell options behave like the machine's own terminal.
+    `cat > ${shq(rcFile)} <<'DSH_RDV_RC'`,
+    '[ -r /etc/profile ] && . /etc/profile',
+    'if [ -r "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile";'
+      + ' elif [ -r "$HOME/.bash_login" ]; then . "$HOME/.bash_login";'
+      + ' elif [ -r "$HOME/.profile" ]; then . "$HOME/.profile"; fi',
+    // The visible prompt is printed by PROMPT_COMMAND *before* the marker: the
+    // host emulator only accepts `dsh> ` as the text following OSC 133;D
+    // (exactly, within six characters), so anything else shown as the prompt
+    // must come earlier on the line. The controlled token itself is drawn
+    // concealed, which keeps the terminal looking like the machine's own.
+    '__rdv_prompt() {',
+    '  __rdv_status=$?',
+    '  __rdv_host=${HOSTNAME%%.*}',
+    '  [ -n "$__rdv_host" ] || __rdv_host=$(hostname -s 2>/dev/null || uname -n)',
+    '  __rdv_path=$PWD',
+    '  case $__rdv_path in "$HOME") __rdv_path=\'~\';; "$HOME"/*) __rdv_path=~${__rdv_path#"$HOME"};; esac',
+    '  printf \'\\033[1;32m%s@%s\\033[0m:\\033[1;36m%s\\033[0m\' "${USER:-$(id -un 2>/dev/null)}" "$__rdv_host" "$__rdv_path"',
+    '  printf \'\\033]133;D;%s\\007\' "$__rdv_status"',
+    '}',
+    `PS1=${shq('\\[\\033[8m\\]dsh> \\[\\033[0m\\]')}`,
+    'PROMPT_COMMAND=__rdv_prompt',
+    'DSH_RDV_RC',
+    `exec bash --rcfile ${shq(rcFile)} -i`,
   ]
   return lines.join('\n')
 }
@@ -110,6 +137,7 @@ export class RemoteTerminalHandle implements SubprocessTerminalHandle {
   private readonly remotePath: string
   private readonly spec: SubprocessTerminalSpawnSpec
   private readonly pidFile: string
+  private readonly rcFile: string
   private readonly out = new Readable({ read(): void { /* pushed by the channel */ } })
   private channel: ClientChannel | null = null
   private closed = false
@@ -131,7 +159,9 @@ export class RemoteTerminalHandle implements SubprocessTerminalHandle {
     this.machine = options.machine
     this.remotePath = options.remotePath
     this.spec = options.spec
-    this.pidFile = `/tmp/.dsh-rdv-term-${Math.random().toString(36).slice(2, 10)}.pid`
+    const id = Math.random().toString(36).slice(2, 10)
+    this.pidFile = `/tmp/.dsh-rdv-term-${id}.pid`
+    this.rcFile = `/tmp/.dsh-rdv-term-${id}.rc`
     this.output = this.out
     this.closedPromise = new Promise<void>((resolve) => { this.resolveClosed = resolve })
     this.done = new Promise<SubprocessOutcome>((resolve, reject) => {
@@ -148,7 +178,7 @@ export class RemoteTerminalHandle implements SubprocessTerminalHandle {
   private async open(): Promise<void> {
     try {
       const client = await this.world.poolFor(this.machine).connect()
-      const command = remoteTerminalCommand(this.remotePath, this.spec, this.pidFile)
+      const command = remoteTerminalCommand(this.remotePath, this.spec, this.pidFile, this.rcFile)
       const stream = await new Promise<ClientChannel>((resolve, reject) => {
         client.exec(command, {
           pty: {
@@ -197,7 +227,7 @@ export class RemoteTerminalHandle implements SubprocessTerminalHandle {
     this.resolveClosed()
     this.resolveDone({ exitCode, signal })
     // The pid file is a scratch file on the remote machine; best-effort only.
-    void this.world.execOn(this.machine, `rm -f ${shq(this.pidFile)}`, { timeoutMs: 5_000 }).catch(() => { /* best-effort */ })
+    void this.world.execOn(this.machine, `rm -f ${shq(this.pidFile)} ${shq(this.rcFile)}`, { timeoutMs: 5_000 }).catch(() => { /* best-effort */ })
   }
 
   private fail(error: Error): void {

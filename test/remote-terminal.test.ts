@@ -68,16 +68,32 @@ function fakeWorld(channel: FakeChannel): { world: RemoteWorld; commands: string
   return { world, commands, execs, spawns }
 }
 
-test('the bootstrap cd-guards, records its pid, and exports the readiness prompt', () => {
-  const command = remoteTerminalCommand("/home/dev/it's here", spec({ env: { DSH_HOME: '/home/dev/.dsh' } }), '/tmp/.term.pid')
+test('the bootstrap cd-guards, records its pid, and loads the machine profile', () => {
+  const command = remoteTerminalCommand("/home/dev/it's here", spec({ env: { DSH_HOME: '/home/dev/.dsh' } }), '/tmp/.term.pid', '/tmp/.term.rc')
   assert.ok(command.startsWith(`cd '/home/dev/it'\\''s here' ||`), 'the cd guard quotes the path')
   assert.match(command, /echo \$\$ > '\/tmp\/\.term\.pid'/, 'exec keeps the recorded pid as the shell pid')
-  assert.match(command, /export PS1='dsh> '/)
-  assert.ok(command.includes('PROMPT_COMMAND'), 'the readiness prompt is exported')
-  assert.ok(command.includes(']133;D;%s'), 'the emulator reads OSC 133;D as readiness')
-  assert.match(command, /export DSH_HOME='\/home\/dev\/\.dsh'/, "the backend's environment crosses")
+  assert.match(command, /export DSH_HOME='\/home\/dev\/\.dsh'/, "the backend's environment crosses before the profile")
   assert.match(command, /export TERM='xterm-256color'/, 'a dumb terminal type is raised for a real emulator')
-  assert.ok(command.endsWith('exec bash --noprofile --norc -i'))
+  // The rc file runs the login chain the way an interactive login shell would:
+  // /etc/profile first, then the first user profile that exists.
+  assert.ok(command.includes("cat > '/tmp/.term.rc' <<'DSH_RDV_RC'"), 'one generated rc file replaces the shell rc')
+  assert.match(command, /\. \/etc\/profile/)
+  assert.match(command, /\$HOME\/\.bash_profile/)
+  assert.match(command, /\$HOME\/\.profile/)
+  // The prompt and marker come after the profile, which would otherwise win.
+  const rc = command.slice(command.indexOf('DSH_RDV_RC'))
+  assert.ok(rc.indexOf('PS1=') > rc.indexOf('$HOME/.profile'), 'the host prompt text is set last')
+  assert.ok(command.includes('PROMPT_COMMAND=__rdv_prompt'))
+  assert.ok(command.includes(']133;D;%s'), 'the emulator reads OSC 133;D as readiness')
+  // The visible prompt (user@host:path) is printed before the marker, because
+  // the host emulator only accepts `dsh> ` as the text after OSC 133;D.
+  const promptFn = command.slice(command.indexOf('__rdv_prompt()'), command.indexOf('PS1='))
+  assert.match(promptFn, /\\033\[1;32m%s@%s\\033\[0m/, 'the prompt shows user@host in color')
+  assert.match(promptFn, /\\033\[1;36m%s\\033\[0m/, 'and the working directory')
+  assert.ok(promptFn.indexOf('__rdv_path') < promptFn.indexOf(']133;D;'), 'the path precedes the marker, on the same line')
+  assert.ok(command.includes('\\[\\033[8m\\]dsh> \\[\\033[0m\\]'), 'the controlled token itself is drawn concealed')
+  assert.ok(command.endsWith(`exec bash --rcfile '/tmp/.term.rc' -i`), 'the shell starts interactive with that rc')
+  assert.ok(!command.includes('--noprofile'), 'the machine profile is no longer skipped')
 })
 
 test('spawn opens one pty channel with the requested geometry', async () => {
