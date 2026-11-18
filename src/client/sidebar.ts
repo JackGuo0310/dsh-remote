@@ -16,6 +16,8 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import * as api from './api.ts'
 import { RemoteFiles } from './remote-files.tsx'
 import type { RemoteFilesInjected } from './remote-files.tsx'
+import { RemoteGit } from './remote-git.tsx'
+import type { RemoteGitInjected } from './remote-git.tsx'
 
 /** The subset of the sidebar's public tab descriptor this registration uses. */
 interface SidebarTabLike {
@@ -63,6 +65,15 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
     remoteDownloadUrl: api.remoteDownloadUrl,
     t,
   }
+  const gitInjected: RemoteGitInjected = {
+    sessionRemote: api.sessionRemote,
+    gitStatus: api.gitStatus,
+    gitDiff: api.gitDiff,
+    gitStage: api.gitStage,
+    gitUnstage: api.gitUnstage,
+    gitCommit: api.gitCommit,
+    t,
+  }
   const injectable = ctx as unknown as InjectableContext
   injectable.inject(['betterSidebar'], (scope) => {
     const sidebar = scope.betterSidebar
@@ -91,5 +102,21 @@ export function registerRemoteFilesTab(ctx: ClientContext, t: Translate): void {
     // Tying the disposer to this fiber means unloading either plugin removes
     // the row from the + menu instead of leaving a dead tab behind.
     scope.effect(() => dispose, 'dsh-remote-development: sidebar tab')
+
+    // The sidebar's own Git panel runs `git` on the host (its only special case
+    // is WSL), so a remote workspace cannot use it. This tab answers the same
+    // questions from the plugin's routes, executed on the machine over SSH.
+    const disposeGit = scope.betterSidebar.registerTab({
+      id: 'dsh-remote:git',
+      title: () => t('git.tabTitle'),
+      description: () => t('git.tabDescription'),
+      order: 13,
+      single: true,
+      component: ({ scope: sessionScope }) => createElement(RemoteGit, {
+        sessionId: sessionScope.sessionId,
+        injected: gitInjected,
+      }),
+    })
+    scope.effect(() => disposeGit, 'dsh-remote-development: sidebar git tab')
   })
 }

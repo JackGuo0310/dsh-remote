@@ -11,7 +11,8 @@
  * installed through the agent's own context, decided once per session start
  * from the session's durable cwd. Persistent shell tools are scope-local
  * registrations that `restrict()` cannot name; for those, the subprocess
- * router's remote terminal refusal is the model-facing guard.
+ * router's routing decides the execution world (a remote session's terminal
+ * opens on the machine, not locally).
  * @module dsh-remote-development/tool-visibility
  */
 

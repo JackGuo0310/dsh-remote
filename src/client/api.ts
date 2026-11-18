@@ -126,8 +126,12 @@ export function createAnchor(machineId: string, path: string): Promise<{ ok: boo
   return call('POST', '/anchor', { machineId, path })
 }
 
-/** Whether one session's workspace is remote (and its remote root). */
-export function sessionRemote(sessionId: string): Promise<{ remote: boolean; remotePath?: string; machineId?: string; machineName?: string }> {
+/**
+ * Whether one session's workspace is remote (and its remote root). `pending`
+ * means the host has not loaded that session yet — the tab must retry rather
+ * than settle on "not a remote workspace".
+ */
+export function sessionRemote(sessionId: string): Promise<{ remote: boolean; pending?: boolean; remotePath?: string; machineId?: string; machineName?: string }> {
   return call('GET', `/session-remote?sessionId=${encodeURIComponent(sessionId)}`)
 }
 
@@ -316,6 +320,90 @@ export async function checkEnvironment(machineId: string, refresh = true): Promi
     ...(data.environment === undefined ? {} : { environment: data.environment as RemoteEnvironmentInfo }),
     ...(Array.isArray(data.problems) ? { problems: data.problems as EnvProblem[] } : {}),
   }
+}
+
+/** One changed path in a remote repository. */
+export interface RemoteGitEntry {
+  /** Path relative to the repository root. */
+  path: string
+  /** Two-letter index/worktree status (`M `, ` M`, `??`, …). */
+  xy: string
+}
+
+/** A remote repository's status snapshot. */
+export interface RemoteGitStatus {
+  isRepo: boolean
+  root?: string
+  branch?: string
+  upstream?: string
+  ahead?: number
+  behind?: number
+  entries: RemoteGitEntry[]
+  truncated?: boolean
+}
+
+/** A git call's answer: the payload, or the remote command's own reason. */
+interface GitAnswer<T> {
+  ok: boolean
+  error?: string
+  value?: T
+}
+
+/**
+ * POST one git request. Unlike {@link call}, a refusal (`ok:false`) is a
+ * result the panel renders — a repository that rejects `add` or `commit`
+ * explains itself — so it is returned rather than thrown.
+ */
+async function gitPost<T>(path: string, body: unknown): Promise<GitAnswer<T> & Record<string, unknown>> {
+  let res: Response
+  try {
+    res = await fetch(PREFIX + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) return { ok: false, error: typeof data.error === 'string' ? data.error : `HTTP ${res.status}` }
+  return data as GitAnswer<T> & Record<string, unknown>
+}
+
+/**
+ * Read the workspace's repository status.
+ * @param machineId - serving machine.
+ * @param path - the session's remote workspace root.
+ */
+export function gitStatus(machineId: string, path: string): Promise<{ ok: boolean; status?: RemoteGitStatus; error?: string }> {
+  return gitPost('/git/status', { machineId, path })
+}
+
+/**
+ * Read one changed file's diff.
+ * @param machineId - serving machine.
+ * @param path - the session's remote workspace root.
+ * @param file - repository-relative path.
+ * @param staged - compare the index against HEAD.
+ * @param untracked - the file is not in the index at all.
+ */
+export function gitDiff(machineId: string, path: string, file: string, staged: boolean, untracked: boolean): Promise<{ ok: boolean; diff?: string; error?: string }> {
+  return gitPost('/git/diff', { machineId, path, file, staged, untracked })
+}
+
+/** Stage selected repository-relative paths. */
+export function gitStage(machineId: string, path: string, files: string[]): Promise<{ ok: boolean; error?: string }> {
+  return gitPost('/git/stage', { machineId, path, files })
+}
+
+/** Unstage selected repository-relative paths. */
+export function gitUnstage(machineId: string, path: string, files: string[]): Promise<{ ok: boolean; error?: string }> {
+  return gitPost('/git/unstage', { machineId, path, files })
+}
+
+/** Commit the staged changes with one message. */
+export function gitCommit(machineId: string, path: string, message: string): Promise<{ ok: boolean; output?: string; error?: string }> {
+  return gitPost('/git/commit', { machineId, path, message })
 }
 
 /** One remote workspace anchor with its machine join (machineId/color '' = unjoined). */

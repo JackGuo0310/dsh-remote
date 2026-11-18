@@ -18,10 +18,11 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteFileEntry } from './api.ts'
 import { highlightCode, lineNumbers } from './code-highlight.ts'
+import { useRemoteSession } from './session-scope.ts'
 
 /** Host calls the tab needs, bound once by the plugin (keeps props referentially stable). */
 export interface RemoteFilesInjected {
-  sessionRemote: (sessionId: string) => Promise<{ remote: boolean; remotePath?: string; machineId?: string; machineName?: string }>
+  sessionRemote: (sessionId: string) => Promise<{ remote: boolean; pending?: boolean; remotePath?: string; machineId?: string; machineName?: string }>
   listRemoteFiles: (machineId: string, path: string) => Promise<{ ok: boolean; path: string; parent: string | null; entries: RemoteFileEntry[]; error?: string }>
   readRemoteFile: (machineId: string, path: string) => Promise<{ ok: boolean; path: string; text?: string; size?: number; binary?: boolean; tooLarge?: boolean; error?: string }>
   writeRemoteFile: (machineId: string, path: string, text: string) => Promise<{ ok: boolean; path: string; size: number; error?: string }>
@@ -67,6 +68,7 @@ const FILE_ICON = createElement('span', { className: 'rdv-filesIcon', 'aria-hidd
 /** Extensions the viewer renders as an image instead of text. */
 const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|svg|bmp|ico)$/i
 
+
 /** Human byte size; the list is dense, so one short token per file. */
 function sizeText(bytes: number | undefined): string {
   if (bytes === undefined) return ''
@@ -87,16 +89,17 @@ function sizeText(bytes: number | undefined): string {
 export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInjected }): ReactElement {
   const { sessionId, injected } = props
   const { t } = injected
-  const [machineId, setMachineId] = useState('')
-  const [machineName, setMachineName] = useState('')
+  // Which machine serves this session, with the startup retry rule (see
+  // session-scope): a restored tab must not settle before the host knows.
+  const session = useRemoteSession(sessionId, injected.sessionRemote, props.visible)
+  const machineId = session.machineId
+  const machineName = session.machineName
   const [path, setPath] = useState('')
   const [parent, setParent] = useState<string | null>(null)
   const [entries, setEntries] = useState<RemoteFileEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(0)
-  /** Distinguishes "still resolving the session" from "resolved, not remote". */
-  const [resolved, setResolved] = useState(false)
 
   // ── open file viewer ──────────────────────────────────────────────────────
   const [opened, setOpened] = useState<{ path: string; name: string } | null>(null)
@@ -137,32 +140,13 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
     })
   }, [injected, t])
 
+  // Resolved to a remote session: list its root. A later re-resolution (the
+  // tab reopened, or the session finally loaded) reloads from the new root,
+  // while in-tab navigation keeps using `load` directly.
   useEffect(() => {
-    let cancelled = false
-    token.current += 1
-    setResolved(false)
-    setError('')
-    setEntries([])
-    setPath('')
-    setParent(null)
-    setOpened(null)
-    void injected.sessionRemote(sessionId).then((info) => {
-      if (cancelled) return
-      setResolved(true)
-      if (!info.remote || !info.machineId) {
-        setMachineId('')
-        return
-      }
-      setMachineId(info.machineId)
-      setMachineName(info.machineName ?? '')
-      load(info.machineId, info.remotePath ?? '~')
-    }).catch((err: Error) => {
-      if (cancelled) return
-      setResolved(true)
-      setError(err.message)
-    })
-    return () => { cancelled = true }
-  }, [sessionId, injected, load])
+    if (session.machineId === '') return
+    load(session.machineId, session.remotePath !== '' ? session.remotePath : '~')
+  }, [session.machineId, session.remotePath, load])
 
   /** Open one file in the tab's viewer. */
   const openFile = useCallback((entry: RemoteFileEntry): void => {
@@ -244,7 +228,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
     [draft, editing, fileState, opened],
   )
 
-  if (!resolved) {
+  if (!session.resolved) {
     return createElement('div', { className: 'rdv-files' },
       createElement('div', { className: 'rdv-empty' }, t('files.loading')))
   }

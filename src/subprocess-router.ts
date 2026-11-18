@@ -13,10 +13,10 @@
  * workdir alone — the host platform only matters for the local fallback,
  * which is the inherited runtime.
  *
- * Remote terminal sessions are refused with a clear model-facing error in v1:
- * SSH cannot provide the foreground-process-group facts the terminal contract
- * requires, and a silently degraded terminal would be worse than an honest
- * refusal.
+ * Remote terminal sessions run on an SSH pty through {@link RemoteTerminalHandle}:
+ * the interactive shell is real, while the facts SSH cannot report (foreground
+ * process group, shell activity) answer the contract's documented "unknown"
+ * shapes instead of being invented.
  * @module dsh-remote-development/subprocess-router
  */
 
@@ -37,6 +37,7 @@ import type { MachineRef } from './world.ts'
 import { unconfiguredMachineMessage } from './world.ts'
 import { argvToRemoteCommand, shq } from './paths.ts'
 import { rgMissingHint } from './remote-env.ts'
+import { RemoteTerminalHandle } from './remote-terminal.ts'
 
 /** Tail-keeping byte buffer with whole-stream offset reads. */
 class CollectBuffer {
@@ -359,12 +360,16 @@ export class RoutingSubprocessRuntime extends LocalSubprocessRuntime {
 
   override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
     const route = this.world.classifyHostPath(spec.cwd)
-    if (route.kind === 'remote') {
-      throw new Error(
-        'remote terminal sessions are not supported by dsh-remote-development yet. '
-        + 'Use the bash tool to run commands on the remote host instead.',
-      )
-    }
-    return super.spawnTerminal(spec)
+    if (route.kind !== 'remote') return super.spawnTerminal(spec)
+    const machine = this.world.machineForAnchor(route.route.anchor)
+    // Refuse instead of falling back: a local terminal would open a shell on
+    // the wrong host while the model believes it is the machine.
+    if (!machine) throw new Error(unconfiguredMachineMessage(route.route.anchor))
+    return new RemoteTerminalHandle({
+      world: this.world,
+      machine,
+      remotePath: route.route.remotePath,
+      spec,
+    })
   }
 }

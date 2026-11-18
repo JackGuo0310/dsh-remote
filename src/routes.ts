@@ -16,6 +16,7 @@ import { ensureRemoteDirs, listRemoteDir, publishRemoteFile, readRemoteText, sft
 import { createLocalDir, listLocalDir } from './local-browse.ts'
 import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
+import { gitCommitCommand, gitDiffCommand, gitRootCommand, gitStageCommand, gitStatusCommand, gitUnstageCommand, parsePorcelainV1Z, safeGitPath, safeRemoteDir } from './git.ts'
 import { installedVersion } from './version.ts'
 
 const ROUTE_PREFIX = '/dsh-remote-development'
@@ -286,6 +287,54 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
     return id ? `no saved machine matches machineId "${id}"` : 'machineId is required'
   }
 
+  /**
+   * Accept a client-supplied remote directory only when it sits under a
+   * workspace anchor served by the machine the request names: the git routes
+   * run commands, so the directory is an authorization boundary, not a hint.
+   * @param ref - the request's machine.
+   * @param raw - the path from the body.
+   * @returns the absolute remote directory, or null.
+   */
+  const remoteDirTarget = (ref: MachineRef, raw: unknown): string | null => {
+    const dir = safeRemoteDir(raw)
+    if (dir === null) return null
+    const matched = world.classifyRemotePath(dir)
+    if (matched === null) return null
+    const joined = world.machineForAnchor(matched.anchor)
+    if (joined === null || joined.machine.id !== ref.machine.id) return null
+    return dir
+  }
+
+  /**
+   * The repository top level for one remote directory. Server-derived on every
+   * call (never taken from the client): the workspace may be a subdirectory of
+   * a repository whose root is above the anchor.
+   * @param ref - target machine.
+   * @param dir - remote directory to inspect.
+   * @returns the top level, or null when the directory is not in a repository.
+   */
+  const repoRoot = async (ref: MachineRef, dir: string): Promise<string | null> => {
+    const result = await world.execOn(ref, gitRootCommand(dir), { timeoutMs: world.config.commandTimeoutMs })
+    const root = result.stdout.trim().split('\n')[0] ?? ''
+    return result.code === 0 && root !== '' ? root : null
+  }
+
+  /**
+   * Validate a request's repository-relative file list.
+   * @param raw - the body's `files`.
+   * @returns the paths, or null when the list is unusable.
+   */
+  const gitFiles = (raw: unknown): string[] | null => {
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 200) return null
+    const files: string[] = []
+    for (const entry of raw) {
+      const file = safeGitPath(entry)
+      if (file === null) return null
+      files.push(file)
+    }
+    return files
+  }
+
   const routes = [
     {
       kind: 'exact' as const,
@@ -367,6 +416,131 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
           // remote search reads without paying a round trip).
           const environment = await world.environmentFor(ref, body.refresh === true)
           return sendJson(res, 200, { ok: true, environment, problems: environment.problems })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/status`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        if (target === null) return sendJson(res, 400, { ok: false, error: 'path must be a remote directory under a workspace anchor' })
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: true, status: { isRepo: false, entries: [] } })
+          const result = await world.execOn(ref, gitStatusCommand(root), { timeoutMs: world.config.commandTimeoutMs })
+          if (result.code !== 0) {
+            return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `git status exited ${String(result.code)}` })
+          }
+          return sendJson(res, 200, { ok: true, status: { isRepo: true, root, ...parsePorcelainV1Z(result.stdout) } })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/diff`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        const file = safeGitPath(body.file)
+        if (target === null || file === null) return sendJson(res, 400, { ok: false, error: 'a remote workspace directory and a repository-relative file are required' })
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: false, error: 'this workspace is not inside a git repository' })
+          const result = await world.execOn(ref, gitDiffCommand(root, file, body.staged === true, body.untracked === true), {
+            timeoutMs: world.config.commandTimeoutMs,
+          })
+          // `--no-index` exits 1 when the inputs differ, which for an untracked
+          // file is the normal answer, not a failure.
+          if (result.code !== 0 && !(body.untracked === true && result.code === 1)) {
+            return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `git diff exited ${String(result.code)}` })
+          }
+          return sendJson(res, 200, { ok: true, diff: result.stdout })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/stage`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        const files = gitFiles(body.files)
+        if (target === null || files === null) return sendJson(res, 400, { ok: false, error: 'a remote workspace directory and at least one file are required' })
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: false, error: 'this workspace is not inside a git repository' })
+          const result = await world.execOn(ref, gitStageCommand(root, files), { timeoutMs: world.config.commandTimeoutMs })
+          if (result.code !== 0) return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `git add exited ${String(result.code)}` })
+          return sendJson(res, 200, { ok: true })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/unstage`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        const files = gitFiles(body.files)
+        if (target === null || files === null) return sendJson(res, 400, { ok: false, error: 'a remote workspace directory and at least one file are required' })
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: false, error: 'this workspace is not inside a git repository' })
+          const result = await world.execOn(ref, gitUnstageCommand(root, files), { timeoutMs: world.config.commandTimeoutMs })
+          if (result.code !== 0) return sendJson(res, 200, { ok: false, error: result.stderr.trim() || `git restore exited ${String(result.code)}` })
+          return sendJson(res, 200, { ok: true })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/git/commit`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        const target = remoteDirTarget(ref, body.path)
+        const message = String(body.message ?? '')
+        if (target === null) return sendJson(res, 400, { ok: false, error: 'path must be a remote directory under a workspace anchor' })
+        if (message.trim() === '') return sendJson(res, 400, { ok: false, error: 'a commit message is required' })
+        try {
+          const root = await repoRoot(ref, target)
+          if (root === null) return sendJson(res, 200, { ok: false, error: 'this workspace is not inside a git repository' })
+          // The message rides stdin: it can hold quotes, braces, and newlines
+          // without ever being parsed by a shell.
+          const result = await world.execOn(ref, gitCommitCommand(root), { timeoutMs: world.config.commandTimeoutMs, stdin: message })
+          if (result.code !== 0) return sendJson(res, 200, { ok: false, error: result.stderr.trim() || result.stdout.trim() || `git commit exited ${String(result.code)}` })
+          return sendJson(res, 200, { ok: true, output: result.stdout.trim() })
         } catch (err) {
           return sendJson(res, 200, { ok: false, error: (err as Error).message })
         }
@@ -462,11 +636,15 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         const sessionId = url.searchParams.get('sessionId') ?? ''
         if (!sessionId) return sendJson(res, 400, { ok: false, error: 'sessionId is required' })
         const sessions = ctx.get('sessions')
-        if (sessions === undefined) return sendJson(res, 200, { remote: false })
+        if (sessions === undefined) return sendJson(res, 200, { remote: false, pending: true })
         try {
           const session = (sessions as unknown as { get: (id: string) => { header?: { cwd?: string } } | undefined }).get(sessionId)
           const cwd = session?.header?.cwd
-          if (!cwd) return sendJson(res, 200, { remote: false })
+          // A restored tab can ask before the host has loaded that session. That
+          // is "not known yet", not "local": answering `remote: false` there made
+          // the tab settle on the empty state until it was reopened, so the
+          // answer names the difference and the tab retries.
+          if (!session || !cwd) return sendJson(res, 200, { remote: false, pending: true })
           const local = world.classifyHostPath(cwd)
           if (local.kind !== 'remote') return sendJson(res, 200, { remote: false })
           // The machine join lets the sidebar's remote-file tab open on the

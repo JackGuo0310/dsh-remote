@@ -128,6 +128,23 @@ body[data-ds-dark-theme] .rdv-code .hljs-link { color: #61afef; }
 .rdv-envCommand { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
 .rdv-envLabel { flex: none; padding: 1px 6px; border-radius: 5px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
 .rdv-envCode { flex: 1 1 320px; min-width: 0; padding: 4px 8px; border-radius: 6px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 16px; white-space: pre-wrap; word-break: break-all; }
+/* Remote Git tab: a status list plus the selected file's diff. */
+.rdv-gitHead { display: flex; align-items: center; gap: 8px; flex: none; padding: 6px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3); }
+.rdv-gitBranch { color: var(--dsw-alias-label-primary); font-size: 12px; font-weight: 510; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdv-gitTracking { color: var(--dsw-alias-label-tertiary); font-size: 11px; white-space: nowrap; }
+.rdv-gitNotice { padding: 4px 10px; }
+.rdv-gitRow { display: flex; align-items: center; gap: 6px; padding-right: 6px; }
+.rdv-gitRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.rdv-gitBadge { flex: none; width: 22px; text-align: center; padding: 1px 0; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.rdv-gitBadgeNew { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary)); }
+.rdv-gitFile { flex: 1; min-width: 0; padding: 6px 2px; }
+.rdv-gitRowActions { display: flex; align-items: center; gap: 4px; flex: none; }
+.rdv-gitDiffPane { display: flex; flex-direction: column; flex: 1 1 200px; min-height: 120px; border-top: 1px solid var(--dsw-alias-border-l3); }
+.rdv-gitDiffHead { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--dsw-alias-border-l4); }
+.rdv-gitDiffPath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.rdv-gitDiff { flex: 1; min-height: 0; margin: 0; padding: 8px 10px; overflow: auto; color: var(--dsw-alias-label-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 16px; white-space: pre; }
+.rdv-gitCommit { display: flex; align-items: center; gap: 6px; flex: none; padding: 8px 10px; border-top: 1px solid var(--dsw-alias-border-l3); }
+.rdv-gitCommit > :first-child { flex: 1; min-width: 0; }
 `
 
 /** Inject the stylesheet once (idempotent across plugin reloads). */

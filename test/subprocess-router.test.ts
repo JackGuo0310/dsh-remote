@@ -86,6 +86,7 @@ function fakeWorld(options: {
       exec: async () => ({ code: 0, signal: undefined, timedOut: false, stdout: '', stderr: '' }),
       tunables: { maxOutputChars: 1000 },
     }),
+    execOn: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false }),
     audit: () => {},
     anchors: () => [ANCHOR],
     cachedEnvironment: () => options.environment,
@@ -156,15 +157,53 @@ test('local spawns delegate to the inherited runtime and never touch the pool', 
   assert.equal(pooled, false, 'a local cwd must not open an SSH channel')
 })
 
-test('remote terminal sessions refuse with the model-facing error on every host platform', async () => {
+test('a remote terminal spawns a pty shell on the machine instead of a local one', async () => {
+  const commands: string[] = []
+  let pty: { rows?: number; cols?: number } | undefined
+  const listeners = new Map<string, (...args: unknown[]) => void>()
+  const channel = {
+    on(event: string, fn: (...args: unknown[]) => void): void { listeners.set(event, fn) },
+    stderr: { on(): void {} },
+    signal(): void {},
+    close(): void { listeners.get('close')?.(0, undefined) },
+    end(): void {},
+    write(): void {},
+    setWindow(): void {},
+  }
   const world = fakeWorld({
     classify: (cwd) => cwd.startsWith(ANCHOR.dir)
       ? { kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }
       : { kind: 'local' },
   })
+  ;(world.poolFor as unknown as (ref: unknown) => unknown) = () => ({
+    connect: async () => ({
+      exec(command: string, opts: { pty?: { rows?: number; cols?: number } }, cb: (err: undefined, stream: unknown) => void): void {
+        commands.push(command)
+        pty = opts.pty
+        queueMicrotask(() => cb(undefined, channel))
+      },
+    }),
+  })
+  const router = new RoutingSubprocessRuntime(new Context(), world)
+  const spec = { cwd: ANCHOR.dir, rows: 24, cols: 80, terminalType: 'dumb', graceMs: 10 } as SubprocessTerminalSpawnSpec
+  const handle = await router.spawnTerminal(spec)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(commands.length, 1, 'the terminal crosses the SSH exec channel exactly once')
+  assert.ok(commands[0]!.includes('/home/dev/myapp'), 'the remote cwd is the shell\'s start directory')
+  assert.ok(commands[0]!.includes(']133;D;'), 'the prompt marker the host emulator reads as readiness')
+  assert.deepEqual(pty, { term: 'xterm-256color', rows: 24, cols: 80 })
+  channel.close()
+  await handle.terminate()
+})
+
+test('a remote terminal whose machine is gone refuses instead of running locally', async () => {
+  const world = fakeWorld({
+    classify: () => ({ kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }),
+    machine: null,
+  })
   const router = new RoutingSubprocessRuntime(new Context(), world)
   const spec = { cwd: ANCHOR.dir } as SubprocessTerminalSpawnSpec
-  await assert.rejects(router.spawnTerminal(spec), /remote terminal sessions are not supported/)
+  await assert.rejects(router.spawnTerminal(spec), /no longer configured/)
 })
 
 /** The cached verdict a machine that lacks rg would have. */

@@ -7,8 +7,8 @@
  *     roots) serve reads/writes/edits over SFTP; everything else delegates
  *     to the inherited sandboxed local backend, untouched.
  *   • `ctx.subprocess` — RoutingSubprocessRuntime: spawns with a cwd under an
- *     anchor run over the SSH exec channel; remote terminals refuse with a
- *     clear model-facing error (v1 scope).
+ *     anchor run over the SSH exec channel, and remote terminal spawns open an
+ *     interactive shell on the machine over an SSH pty.
  *   • `ctx.shell` — a routing executor keyed on the workdir: anchor paths run
  *     on the remote host's POSIX shell over SSH; local workdirs stay with the
  *     host platform's own sandboxed executor (bash on POSIX, pwsh on win32).
