@@ -242,6 +242,82 @@ export function closeForward(id: string): Promise<{ ok: boolean }> {
   return call('POST', '/forwards/close', { id })
 }
 
+/** One copyable install route for a missing prerequisite. */
+export interface EnvInstallCommand {
+  label: string
+  command: string
+  /** Why this route may not apply, when it may not. */
+  note?: string
+}
+
+/** One gap the environment probe found. */
+export interface EnvProblem {
+  id: 'bash' | 'rg' | 'git' | 'tar' | 'home' | 'arch'
+  severity: 'error' | 'warn'
+  /** Host-authored explanation (English); the page prefers its own localized copy. */
+  message: string
+  commands: EnvInstallCommand[]
+}
+
+/** What the probe measured on one machine. */
+export interface RemoteEnvironmentInfo {
+  machineId: string
+  checkedAt: string
+  platform: string
+  arch: string
+  bashVersion: string
+  rgPath: string
+  rgVersion: string
+  gitPath: string
+  tarPath: string
+  curlPath: string
+  wgetPath: string
+  sudoPath: string
+  home: string
+  homeWritable: boolean
+  path: string
+  writablePathDir: string
+  problems: EnvProblem[]
+}
+
+/** The environment check's answer: a verdict, or why the check could not run. */
+export interface EnvCheck {
+  ok: boolean
+  environment?: RemoteEnvironmentInfo
+  problems?: EnvProblem[]
+  error?: string
+}
+
+/**
+ * Measure one machine's remote prerequisites. `refresh` is the page's check
+ * button; without it the host serves the cached verdict, which is what an
+ * already-failed remote search reads.
+ * @param machineId - the saved machine.
+ * @param refresh - re-probe instead of using the cache.
+ * @returns the verdict, or the transport failure.
+ */
+export async function checkEnvironment(machineId: string, refresh = true): Promise<EnvCheck> {
+  let res: Response
+  try {
+    res = await fetch(`${PREFIX}/env`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ machineId, refresh }),
+    })
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok || data.ok !== true) {
+    return { ok: false, error: typeof data.error === 'string' ? data.error : `HTTP ${res.status}` }
+  }
+  return {
+    ok: true,
+    ...(data.environment === undefined ? {} : { environment: data.environment as RemoteEnvironmentInfo }),
+    ...(Array.isArray(data.problems) ? { problems: data.problems as EnvProblem[] } : {}),
+  }
+}
+
 /** One remote workspace anchor with its machine join (machineId/color '' = unjoined). */
 export interface AnchorStatus {
   dir: string

@@ -120,6 +120,14 @@ body[data-ds-dark-theme] .rdv-code .hljs-link { color: #61afef; }
 .rdv-forwardUrl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--dsw-alias-label-primary); }
 .rdv-forwardTarget { color: var(--dsw-alias-label-tertiary); font-size: 11px; white-space: nowrap; }
 .rdv-sectionTitle { margin: 8px 0 0; color: var(--dsw-alias-label-primary); font-size: 13px; font-weight: 510; line-height: 20px; }
+/* Environment check: a verdict panel under its machine card, with one row per
+   copyable install route. The command wraps instead of scrolling sideways —
+   these are meant to be read and copied whole. */
+.rdv-env { display: flex; flex-direction: column; gap: 6px; margin-top: -4px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l4); border-radius: 10px; background: var(--dsw-alias-bg-layer-2); }
+.rdv-envProblem { display: flex; flex-direction: column; gap: 6px; }
+.rdv-envCommand { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.rdv-envLabel { flex: none; padding: 1px 6px; border-radius: 5px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
+.rdv-envCode { flex: 1 1 320px; min-width: 0; padding: 4px 8px; border-radius: 6px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 16px; white-space: pre-wrap; word-break: break-all; }
 `
 
 /** Inject the stylesheet once (idempotent across plugin reloads). */

@@ -354,6 +354,26 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
     },
     {
       kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/env`,
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = await readJsonBody(req)
+        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+        const ref = resolveRef(body)
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
+        try {
+          // `refresh: true` is the settings page's check button: it re-probes
+          // instead of serving the cached verdict (the cache is what a failed
+          // remote search reads without paying a round trip).
+          const environment = await world.environmentFor(ref, body.refresh === true)
+          return sendJson(res, 200, { ok: true, environment, problems: environment.problems })
+        } catch (err) {
+          return sendJson(res, 200, { ok: false, error: (err as Error).message })
+        }
+      },
+    },
+    {
+      kind: 'exact' as const,
       path: `${ROUTE_PREFIX}/ls`,
       handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })

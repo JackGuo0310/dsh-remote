@@ -42,6 +42,7 @@ import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
 import { unconfiguredMachineMessage } from './world.ts'
 import { shq } from './paths.ts'
+import { rgMissingHint } from './remote-env.ts'
 
 /** Marker written by the cd guard so a failed cd is an infrastructure error. */
 const CD_FAIL_MARKER = '@@RDV_CD_FAIL@@'
@@ -54,6 +55,13 @@ const TIMEOUT_CODE = 'BASH_TIMEOUT'
 
 /** Grace between the remote SIGTERM and the SIGKILL escalation, mirroring the local executor. */
 const KILL_ESCALATION_MS = 3_000
+
+/**
+ * How a POSIX shell reports a missing `rg` program. bash says
+ * `bash: rg: command not found` (line and sh say `rg: not found`), and zsh
+ * `command not found: rg`; all three mean the same fixable thing.
+ */
+const RG_NOT_FOUND = /rg:\s*(?:command )?not found|command not found:\s*rg/i
 
 /**
  * Replace anchor-directory spellings (absolute, `~`-relative, and `$HOME`/
@@ -491,6 +499,13 @@ class RemoteExecution implements ShellExecution {
     if (this.exitCode === 125 && this.stderr.collected().text.includes(CD_FAIL_MARKER)) {
       this.cdFailure = `cannot use remote working directory ${this.remotePath}: `
         + this.stderr.collected().text.replace(CD_FAIL_MARKER, '').trim()
+    }
+    // A command that failed only because `rg` is not installed on the machine
+    // is explained in the same stderr the caller renders, using the cached
+    // probe — an error path never opens another SSH session to ask.
+    if (this.exitCode === 127 && RG_NOT_FOUND.test(this.stderr.collected().text)) {
+      const machineId = this.machine.machine.id
+      this.stderr.append(`\n${rgMissingHint(machineId, this.world.cachedEnvironment(machineId))}\n`)
     }
     this.world.audit(this.machine, this.spec.command, this.exitCode)
     this.resolveDone()

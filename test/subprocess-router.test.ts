@@ -8,6 +8,8 @@ import type { RemoteWorld, MachineRef } from '../src/world.ts'
 import type { AnchorInfo, AnchorRoute } from '../src/anchors.ts'
 import type { ClientChannel, SshClientLike } from '../src/pool.ts'
 import type { SubprocessSpawnSpec, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { parseEnvironment, ENV_HINT_PREFIX } from '../src/remote-env.ts'
+import type { RemoteEnvironment } from '../src/remote-env.ts'
 
 const ANCHOR: AnchorInfo = {
   dir: path.join(tmpdir(), 'rdv-fake-anchor'),
@@ -18,23 +20,30 @@ const ANCHOR: AnchorInfo = {
 const MACHINE: MachineRef = {
   source: 'registry',
   machine: {
-    id: 'm1', name: 'dev', host: 'dev.example.com', port: 22, username: 'dev',
+    id: 'dev.example.com|22|dev', name: 'dev', host: 'dev.example.com', port: 22, username: 'dev',
     password: '', privateKeyPath: '', passphrase: '', useAgent: false, keyboardInteractive: false, hostKeyMode: 'accept-new', workspace: '', color: '',
   },
 }
 
-/** Fake channel emitting an immediate close. */
-function fakeStream(): ClientChannel {
-  const listeners = new Map<string, (v?: unknown) => void>()
+/** Fake channel: scripted stdout/stderr, then one close. */
+type FakeStream = ClientChannel & {
+  emit(event: string, ...args: unknown[]): void
+  emitStderr(data: string): void
+}
+
+function fakeStream(): FakeStream {
+  const listeners = new Map<string, (...args: unknown[]) => void>()
+  const stderrListeners = new Map<string, (v?: unknown) => void>()
   return {
-    on(event: string, fn: (v?: unknown) => void): void { listeners.set(event, fn) },
-    stderr: { on(): void {} },
+    on(event: string, fn: (...args: unknown[]) => void): void { listeners.set(event, fn) },
+    stderr: { on(event: string, fn: (v?: unknown) => void): void { stderrListeners.set(event, fn) } },
     signal(): void {},
     close(): void {},
     end(): void {},
     write(): void {},
-    emit(event: string, v?: unknown): void { listeners.get(event)?.(v) },
-  } as unknown as ClientChannel
+    emit(event: string, ...args: unknown[]): void { listeners.get(event)?.(...args) },
+    emitStderr(data: string): void { stderrListeners.get('data')?.(Buffer.from(data)) },
+  } as unknown as FakeStream
 }
 
 /**
@@ -47,6 +56,10 @@ function fakeWorld(options: {
   machine?: MachineRef | null
   onCommand?: (command: string) => void
   exitCode?: number
+  /** What the fake remote shell writes to stderr before the channel closes. */
+  stderr?: string
+  /** The cached probe the hint path reads, when one exists. */
+  environment?: RemoteEnvironment
 }): RemoteWorld {
   const client = (): SshClientLike => ({
     exec(command: string, _opts: unknown, cb: (err: Error | undefined, stream: ClientChannel) => void): void {
@@ -54,7 +67,10 @@ function fakeWorld(options: {
       const stream = fakeStream()
       queueMicrotask(() => {
         cb(undefined, stream)
-        queueMicrotask(() => stream.emit('close', options.exitCode ?? 0, undefined))
+        queueMicrotask(() => {
+          if (options.stderr !== undefined) stream.emitStderr(options.stderr)
+          stream.emit('close', options.exitCode ?? 0, undefined)
+        })
       })
     },
     sftp(): void {},
@@ -72,6 +88,7 @@ function fakeWorld(options: {
     }),
     audit: () => {},
     anchors: () => [ANCHOR],
+    cachedEnvironment: () => options.environment,
   } as unknown as RemoteWorld
 }
 
@@ -148,6 +165,55 @@ test('remote terminal sessions refuse with the model-facing error on every host 
   const router = new RoutingSubprocessRuntime(new Context(), world)
   const spec = { cwd: ANCHOR.dir } as SubprocessTerminalSpawnSpec
   await assert.rejects(router.spawnTerminal(spec), /remote terminal sessions are not supported/)
+})
+
+/** The cached verdict a machine that lacks rg would have. */
+const RG_MISSING: RemoteEnvironment = parseEnvironment([
+  'os\tLinux',
+  'arch\tx86_64',
+  'bash\tGNU bash, version 5.1.16(1)-release',
+  'rg\t',
+  'rgver\t',
+  'git\t/usr/bin/git',
+  'tar\t/usr/bin/tar',
+  'curl\t/usr/bin/curl',
+  'wget\t',
+  'sudo\t/usr/bin/sudo',
+  'home\t/home/dev',
+  'homew\t1',
+  'path\t/usr/bin:/bin',
+  'writepath\t',
+].join('\n'), 'dev.example.com|22|dev', '2026-01-01T00:00:00.000Z')
+
+test('a rewritten ripgrep that exits 127 explains itself in the captured stderr', async () => {
+  const world = fakeWorld({
+    classify: () => ({ kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }),
+    exitCode: 127,
+    stderr: 'bash: rg: command not found\n',
+    environment: RG_MISSING,
+  })
+  const router = new RoutingSubprocessRuntime(new Context(), world)
+  const handle = router.spawn(spawnSpec(ANCHOR.dir, ['rg', '--files', 'src']))
+  await handle.done
+  const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
+  assert.match(stderr, /bash: rg: command not found/, 'the remote shell evidence is preserved')
+  assert.ok(stderr.includes(ENV_HINT_PREFIX), 'the hint rides the same stderr the search tools quote')
+  assert.match(stderr, /dev@dev\.example\.com:22/, 'the hint names the machine')
+  assert.match(stderr, /sudo apt-get update && sudo apt-get install -y ripgrep/)
+})
+
+test('exit 127 from a command that was not ripgrep gets no environment hint', async () => {
+  const world = fakeWorld({
+    classify: () => ({ kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }),
+    exitCode: 127,
+    stderr: 'bash: npm: command not found\n',
+    environment: RG_MISSING,
+  })
+  const router = new RoutingSubprocessRuntime(new Context(), world)
+  const handle = router.spawn(spawnSpec(ANCHOR.dir, ['npm', 'run', 'build']))
+  await handle.done
+  const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
+  assert.equal(stderr.includes(ENV_HINT_PREFIX), false, 'only the rewrite this plugin performed is explained')
 })
 
 test('an anchor whose machine is gone refuses instead of running locally', () => {

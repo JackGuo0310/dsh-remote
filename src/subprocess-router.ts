@@ -36,6 +36,7 @@ import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
 import { unconfiguredMachineMessage } from './world.ts'
 import { argvToRemoteCommand, shq } from './paths.ts'
+import { rgMissingHint } from './remote-env.ts'
 
 /** Tail-keeping byte buffer with whole-stream offset reads. */
 class CollectBuffer {
@@ -112,6 +113,10 @@ class RemoteSpawnHandle implements SubprocessHandle {
   private state: ChannelState | null = null
   private terminated = false
   private readonly spec: SubprocessSpawnSpec
+  private readonly world: RemoteWorld
+  private readonly machine: MachineRef
+  /** Whether this spawn's argv[0] was re-pointed at the remote `rg`. */
+  private rgRouted = false
 
   /**
    * Start the remote process for one spec. The SSH round trip begins
@@ -123,6 +128,8 @@ class RemoteSpawnHandle implements SubprocessHandle {
    */
   constructor(world: RemoteWorld, machine: MachineRef, remotePath: string, spec: SubprocessSpawnSpec) {
     this.spec = spec
+    this.world = world
+    this.machine = machine
     let resolveDone: (outcome: SubprocessOutcome) => void
     let rejectDone: (err: Error) => void
     this.done = new Promise<SubprocessOutcome>((resolve, reject) => {
@@ -146,8 +153,11 @@ class RemoteSpawnHandle implements SubprocessHandle {
     try {
       const pool = world.poolFor(machine)
       const client = await pool.connect()
-      const remoteArgv = rewriteRipgrep(this.spec.argv, world.config.remoteRipgrep)
-      const command = buildRemoteCommand(remoteArgv, this.spec.env)
+      const rewrite = rewriteRipgrep(this.spec.argv, world.config.remoteRipgrep)
+      // Remember the rewrite: exit 127 from this spawn means the remote `rg`
+      // is missing, not that the caller's own program was.
+      this.rgRouted = rewrite.rewritten
+      const command = buildRemoteCommand(rewrite.argv, this.spec.env)
       // The exec channel hands the string to the remote login shell, so the
       // cd guard is shell syntax by necessity; every argv element stays
       // quoted, preserving the seam's "argv is never shell-interpreted"
@@ -205,6 +215,10 @@ class RemoteSpawnHandle implements SubprocessHandle {
       try { channel.end() } catch { /* stdin already closed */ }
     }
     channel.on('close', (code: number | undefined, sig: string | undefined) => {
+      // A rewritten ripgrep that never started is the failure the operator can
+      // fix; explain it in the same stderr the search tools quote, before the
+      // outcome settles.
+      if (code === 127 && this.rgRouted) this.explainMissingRipgrep(state)
       resolveDone({
         exitCode: typeof code === 'number' ? code : null,
         signal: (sig as SubprocessOutcome['signal']) ?? null,
@@ -247,6 +261,19 @@ class RemoteSpawnHandle implements SubprocessHandle {
     return undefined
   }
 
+  /**
+   * Append the actionable explanation for a missing remote `rg` to the captured
+   * stderr. The probe result is read from the world's cache — never re-probed
+   * here, because an error path must not pay a second round trip.
+   * @param state - the opened channel's buffers.
+   */
+  private explainMissingRipgrep(state: ChannelState): void {
+    const machineId = this.machine.machine.id
+    const text = `\n${rgMissingHint(machineId, this.world.cachedEnvironment(machineId))}\n`
+    if (state.stderrBuffer !== undefined) state.stderrBuffer.push(new TextEncoder().encode(text))
+    else process.stderr.write(text)
+  }
+
   terminate(): void {
     this.terminated = true
     const state = this.state
@@ -277,14 +304,16 @@ class RemoteSpawnHandle implements SubprocessHandle {
  * Re-point the packaged ripgrep binary at the remote `rg` command.
  * @param argv - the local argv vector.
  * @param remoteRipgrep - the remote ripgrep command name.
- * @returns the argv with argv[0] rewritten when it is the packaged rg.
+ * @returns the argv to run, and whether argv[0] was the packaged ripgrep
+ *   (reported explicitly: the remote name is often also `rg`, so the strings
+ *   alone cannot tell a rewrite from an untouched command).
  */
-function rewriteRipgrep(argv: readonly string[], remoteRipgrep: string): string[] {
+function rewriteRipgrep(argv: readonly string[], remoteRipgrep: string): { argv: string[]; rewritten: boolean } {
   const first = argv[0] ?? ''
   const rest = argv.slice(1)
   const base = first.replace(/\\/g, '/').split('/').pop() ?? ''
-  if (base === 'rg' || base === 'rg.exe') return [remoteRipgrep, ...rest]
-  return [first, ...rest]
+  if (base === 'rg' || base === 'rg.exe') return { argv: [remoteRipgrep, ...rest], rewritten: true }
+  return { argv: [first, ...rest], rewritten: false }
 }
 
 /** Compose the remote command line: optional env prefix, then the quoted argv. */

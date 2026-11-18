@@ -14,7 +14,7 @@
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { FsError, FsTargetKey } from '@deepseek-ai/dsh-fs'
-import type { FsDirEntry, FsEditOutcome, FsEditRequest, FsInfo, FsPathInfo, FsTarget, FsVersion, FsWriteIntent, FsWriteOutcome } from '@deepseek-ai/dsh-fs'
+import type { FsDeleteOutcome, FsDirEntry, FsEditOutcome, FsEditRequest, FsInfo, FsPathInfo, FsTarget, FsVersion, FsWriteIntent, FsWriteOutcome } from '@deepseek-ai/dsh-fs'
 import { SandboxedFileSystem } from '@deepseek-ai/dsh-fs-sandbox'
 import type { Config as LocalFsConfig } from '@deepseek-ai/dsh-fs-local'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -23,7 +23,7 @@ import type { SFTPWrapper } from 'ssh2'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
 import { unconfiguredMachineMessage } from './world.ts'
-import { listRemoteDir, lstatPath, readRemoteBytes, readRemoteByteWindow, readRemoteText, statPath, streamRemoteText, editRemoteText, writeRemoteText } from './remote-io.ts'
+import { listRemoteDir, lstatPath, readRemoteBytes, readRemoteByteWindow, readRemoteText, statPath, streamRemoteText, deleteRemoteFile, editRemoteText, writeRemoteText } from './remote-io.ts'
 import { relUnder } from './paths.ts'
 
 /** targetKey namespace marker for remote targets (opaque to consumers). */
@@ -256,6 +256,41 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     this.checkRemoteMutation(remote.remotePath, target.displayPath, sandboxPolicy)
     return this.lockRemote(target.targetKey as unknown as string, async () =>
       editRemoteText(await this.sftpFor(machine), remote.remotePath, edit, expected, signal, this.opTimeoutMs))
+  }
+
+  /**
+   * Delete one remote file over SFTP, or hand a local target to the inherited
+   * sandboxed backend. The remote branch enforces the same contract as the
+   * local one: a version guard rejects a file changed since observation, a
+   * missing file is a stale version, and a non-regular target is refused.
+   * @param target - the resolved target.
+   * @param expected - optional version guard from the observer.
+   * @param signal - abort hook.
+   * @param sandboxPolicy - the per-call policy fencing the mutation.
+   * @returns the bounded removed text (or null).
+   */
+  override async deleteFile(
+    target: FsTarget,
+    expected?: { version: FsVersion },
+    signal?: AbortSignal,
+    sandboxPolicy?: SandboxExecutionPolicy,
+  ): Promise<FsDeleteOutcome> {
+    const remote = RoutingFileSystem.parseKey(target)
+    // Local targets keep the inherited backend's sandbox fence, lock, and
+    // basis read — the remote branch must not weaken it by handling both.
+    if (remote === null) return super.deleteFile(target, expected, signal, sandboxPolicy)
+    const machine = this.world.machineById(remote.machineId)
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
+    this.checkRemoteMutation(remote.remotePath, target.displayPath, sandboxPolicy)
+    return this.lockRemote(target.targetKey as unknown as string, async () =>
+      deleteRemoteFile(
+        await this.sftpFor(machine),
+        remote.remotePath,
+        expected,
+        signal,
+        this.opTimeoutMs,
+        this.config.diffBasisMaxBytes,
+      ))
   }
 
   /**

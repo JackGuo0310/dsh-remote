@@ -22,6 +22,8 @@ import type { MachineInput } from './registry.ts'
 import type { Machine, RegistryData } from './registry.ts'
 import type { Config, LocalPickerMode } from './config.ts'
 import { normalizeRemotePath } from './paths.ts'
+import { probeRemoteEnvironment } from './remote-env.ts'
+import type { RemoteEnvironment } from './remote-env.ts'
 
 /** Harness home: `DSH_HOME` when set, else `~/.dsh`. */
 export function dshHome(): string {
@@ -55,6 +57,8 @@ export class RemoteWorld {
   private anchorCache: AnchorInfo[] | null = null
   private readonly pools = new Map<string, SshPool>()
   private readonly newClient: ClientFactory | undefined
+  /** Per-machine environment verdicts, refreshed on demand. */
+  private readonly environments = new Map<string, { environment: RemoteEnvironment; at: number }>()
 
   /**
    * @param config - validated plugin config.
@@ -186,6 +190,9 @@ export class RemoteWorld {
       try { pool.close() } catch { /* pool already torn down */ }
       this.pools.delete(key)
     }
+    // The environment verdict describes the connection facts that just
+    // changed, so it must be re-probed rather than served stale.
+    this.environments.delete(machineId)
   }
 
   /**
@@ -456,6 +463,38 @@ export class RemoteWorld {
   }
 
   // ── audit + known hosts ───────────────────────────────────────────────────
+
+  /**
+   * The machine's last environment verdict, without probing. The routing
+   * providers use this to explain a failure they can already see ("rg: command
+   * not found") without paying a round trip inside an error path.
+   * @param machineId - saved machine id.
+   * @returns the cached environment, or undefined when never probed.
+   */
+  cachedEnvironment(machineId: string): RemoteEnvironment | undefined {
+    return this.environments.get(machineId)?.environment
+  }
+
+  /**
+   * Probe (or return the cached) environment for one machine.
+   * @param ref - machine reference.
+   * @param refresh - ignore the cache and probe again.
+   * @returns the environment with its actionable problems.
+   */
+  async environmentFor(ref: MachineRef, refresh = false): Promise<RemoteEnvironment> {
+    const id = ref.machine.id
+    const cached = this.environments.get(id)
+    if (!refresh && cached !== undefined && Date.now() - cached.at < 5 * 60_000) {
+      return cached.environment
+    }
+    const environment = await probeRemoteEnvironment(
+      (command, timeoutMs) => this.execOn(ref, command, { timeoutMs }),
+      id,
+      15000,
+    )
+    this.environments.set(id, { environment, at: Date.now() })
+    return environment
+  }
 
   /**
    * Open one `direct-tcpip` channel from a machine's pool to a service the

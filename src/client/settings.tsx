@@ -13,7 +13,7 @@ import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the settings section owner-share declaration.
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ClientMachine, ForwardInfo, LocalPickerMode, ProbeResult } from './api.ts'
+import type { ClientMachine, EnvCheck, EnvProblem, ForwardInfo, LocalPickerMode, ProbeResult, RemoteEnvironmentInfo } from './api.ts'
 
 /** Injected face bound in the plugin's apply closure. */
 export interface SettingsInjected {
@@ -29,6 +29,8 @@ export interface SettingsInjected {
   listForwards: () => Promise<{ forwards: ForwardInfo[]; lastError: string }>
   openForward: (input: { machineId: string; remotePort: number; remoteHost?: string; localPort?: number }) => Promise<{ ok: boolean; forward: ForwardInfo }>
   closeForward: (id: string) => Promise<{ ok: boolean }>
+  /** Measure one machine's remote prerequisites; `refresh` re-probes instead of using the cache. */
+  checkEnvironment: (machineId: string, refresh?: boolean) => Promise<EnvCheck>
   t: Translate
 }
 
@@ -121,6 +123,11 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const [forwardHost, setForwardHost] = useState('')
   const [forwardBusy, setForwardBusy] = useState(false)
   const [forwardError, setForwardError] = useState('')
+  // Environment checks: which machine is being measured, each machine's last
+  // verdict, and the command the operator most recently copied.
+  const [envBusy, setEnvBusy] = useState<string | null>(null)
+  const [envResults, setEnvResults] = useState<Record<string, EnvCheck>>({})
+  const [copied, setCopied] = useState('')
 
   const refreshForwards = useCallback((): void => {
     void props.listForwards().then((r) => {
@@ -303,6 +310,74 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     })
   }
 
+  /**
+   * Measure one machine's remote prerequisites. The button is the page's
+   * refresh: it always re-probes, so a machine the operator has just fixed
+   * reports its new state instead of the cached one.
+   * @param machine - the saved machine to check.
+   */
+  const checkEnv = (machine: ClientMachine): void => {
+    setEnvBusy(machine.id)
+    void props.checkEnvironment(machine.id, true).then((result) => {
+      setEnvResults((prev) => ({ ...prev, [machine.id]: result }))
+    }).catch((err: Error) => {
+      setEnvResults((prev) => ({ ...prev, [machine.id]: { ok: false, error: err.message } }))
+    }).finally(() => setEnvBusy(null))
+  }
+
+  /**
+   * Copy one install command. The clipboard is best-effort: a browser that
+   * refuses it (insecure context) simply does not change the button label.
+   * @param command - the command text to copy.
+   */
+  const copyCommand = (command: string): void => {
+    if (typeof navigator === 'undefined' || navigator.clipboard === undefined) return
+    void navigator.clipboard.writeText(command).then(() => {
+      setCopied(command)
+      setTimeout(() => setCopied(''), 1500)
+    }).catch(() => { /* clipboard refused; the command stays visible */ })
+  }
+
+  /** The page's own wording for one problem, falling back to the host's. */
+  const problemText = (problem: EnvProblem, info: RemoteEnvironmentInfo | undefined): string => {
+    switch (problem.id) {
+      case 'arch': return t('env.problem.arch')
+      case 'bash': return t('env.problem.bash')
+      case 'rg': return t('env.problem.rg')
+      case 'git': return t('env.problem.git')
+      case 'tar': return t('env.problem.tar')
+      case 'home': return t('env.problem.home', { home: info?.home ?? '~' })
+      default: return problem.message
+    }
+  }
+
+  /** One machine's environment verdict: summary, problems, copyable fixes. */
+  const renderEnv = (check: EnvCheck): ReactElement => {
+    if (!check.ok) {
+      return createElement('div', { className: 'rdv-error' }, `${t('settings.envFailed')}: ${check.error ?? ''}`)
+    }
+    const problems = check.problems ?? []
+    const info = check.environment
+    return createElement('div', { className: 'rdv-env' },
+      createElement('div', { className: problems.length === 0 ? 'rdv-ok' : 'rdv-hint' },
+        problems.length === 0
+          ? t('settings.envOk', { platform: info?.platform ?? '?', arch: info?.arch ?? '?' })
+          : t('settings.envProblems', { count: problems.length })),
+      info !== undefined && createElement('div', { className: 'rdv-hint' },
+        t('settings.envCheckedAt', { time: new Date(info.checkedAt).toLocaleString() })),
+      problems.map((problem) => createElement('div', { key: problem.id, className: 'rdv-envProblem' },
+        createElement('div', { className: problem.severity === 'error' ? 'rdv-error' : 'rdv-hint' }, problemText(problem, info)),
+        problem.commands.map((command) => createElement('div', { key: command.label, className: 'rdv-envCommand' },
+          createElement('span', { className: 'rdv-envLabel' }, command.label),
+          createElement('code', { className: 'rdv-envCode' }, command.command),
+          createElement(Button, { size: 'sm', onClick: () => copyCommand(command.command) },
+            copied === command.command ? t('settings.envCopied') : t('settings.envCopy')),
+          command.note !== undefined && createElement('div', { className: 'rdv-hint' }, command.note),
+        )),
+      )),
+    )
+  }
+
   return createElement('div', { className: 'rdv-page' },
     createElement('p', { className: 'rdv-intro' },
       t('settings.intro'),
@@ -336,7 +411,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
         ? createElement('div', { className: 'rdv-empty' }, t('settings.noMachines'))
         : machines.map((m) => {
             const result = machineResults[m.id]
-            return createElement('div', { key: m.id, className: 'rdv-card' },
+            const env = envResults[m.id]
+            return createElement(Fragment, { key: m.id },
+            createElement('div', { className: 'rdv-card' },
             createElement('div', { className: 'rdv-cardMain' },
               createElement('div', { className: 'rdv-cardName' },
                 m.color !== '' && createElement('span', {
@@ -357,6 +434,14 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
                 disabled: busy || probing !== null,
                 onClick: () => test(m),
               }, probing === m.id ? t('settings.testing') : t('settings.test')),
+              // Measuring the machine is its own async job: a slow SSH host
+              // must not block the rows' other buttons, so only the clicked
+              // machine's check button reports progress.
+              createElement(Button, {
+                size: 'sm',
+                disabled: busy || envBusy !== null,
+                onClick: () => checkEnv(m),
+              }, envBusy === m.id ? t('settings.envChecking') : (env !== undefined ? t('settings.envAgain') : t('settings.envCheck'))),
               createElement(Button, {
                 size: 'sm',
                 disabled: busy || probing !== null,
@@ -389,7 +474,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
                 onClick: () => { setDeleteTarget(m); setDeleteError('') },
               }, t('settings.delete')),
             ),
-          )
+            ),
+            env !== undefined && renderEnv(env),
+            )
           }),
     ),
     // ── on-demand port forwards ────────────────────────────────────────────

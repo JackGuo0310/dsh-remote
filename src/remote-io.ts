@@ -418,6 +418,50 @@ export async function writeRemoteText(
 }
 
 /**
+ * Remove one remote regular file under the delete contract: a target that is
+ * already gone, or one whose identity no longer matches the caller's guard, is
+ * FS_STALE_VERSION (the local backend's wording — "changed since it was read"
+ * covers both, and a retry after re-reading tells the two apart); a directory,
+ * symlink, or special file is FS_NOT_REGULAR_FILE. The removed text is
+ * returned as the bounded basis, `null` when it is unavailable, binary, or
+ * above the caller's cap.
+ * @param sftp - the SFTP channel.
+ * @param p - remote path.
+ * @param expected - optional version guard.
+ * @param signal - abort hook.
+ * @param timeoutMs - per-operation deadline.
+ * @param maxBeforeBytes - inclusive cap on the retained basis (0 = unbounded).
+ * @returns the bounded LF-normalized content that was removed.
+ */
+export async function deleteRemoteFile(
+  sftp: SFTPWrapper,
+  p: string,
+  expected: { version: FsVersion } | undefined,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  maxBeforeBytes: number,
+): Promise<{ before: string | null }> {
+  const info = await statPath(sftp, p, signal, timeoutMs)
+  if (!info) throw new FsError(`cannot delete "${p}": file changed since it was read`, 'FS_STALE_VERSION')
+  if (info.type !== 'file') throw new FsError(`cannot delete "${p}": not a regular file`, 'FS_NOT_REGULAR_FILE')
+  if (expected !== undefined && info.version !== expected.version) {
+    throw new FsError(`cannot delete "${p}": file changed since it was read`, 'FS_STALE_VERSION')
+  }
+  let before: string | null = null
+  if (maxBeforeBytes === 0 || (info.size ?? 0) <= maxBeforeBytes) {
+    try {
+      before = (await readRemoteText(sftp, p, signal, timeoutMs, maxBeforeBytes)).replaceAll('\r\n', '\n')
+    } catch {
+      // The basis is diagnostic, not a precondition: an unreadable or binary
+      // file still deletes, it just reports no content.
+      before = null
+    }
+  }
+  await sftpCall('unlink', signal, timeoutMs, (cb) => sftp.unlink(p, cb as never))
+  return { before }
+}
+
+/**
  * Apply one literal edit to a remote text file with a version guard, sharing
  * one read-guard-write critical section per call (the seam owns ordering by
  * serializing per target at the router level).

@@ -10,6 +10,8 @@ import type { RemoteWorld, MachineRef } from '../src/world.ts'
 import type { AnchorInfo, AnchorRoute } from '../src/anchors.ts'
 import type { ClientChannel, SshClientLike } from '../src/pool.ts'
 import type { ShellExecSpec } from '@deepseek-ai/dsh-shell'
+import { parseEnvironment } from '../src/remote-env.ts'
+import type { RemoteEnvironment } from '../src/remote-env.ts'
 
 const ANCHOR: AnchorInfo = {
   dir: path.join(tmpdir(), 'rdv-fake-anchor'),
@@ -62,6 +64,8 @@ function fakeWorld(options: {
   exitCode?: number
   /** What the fake channel emits once it is open, and how long it stays open. */
   channel?: { stdout?: readonly string[]; stderr?: readonly string[]; closeAfterMs?: number }
+  /** The cached environment verdict the hint path reads, when one exists. */
+  environment?: RemoteEnvironment
 }): RemoteWorld {
   const client = (): SshClientLike => ({
     exec(command: string, _opts: unknown, cb: (err: Error | undefined, stream: ClientChannel) => void): void {
@@ -98,6 +102,7 @@ function fakeWorld(options: {
     execOn: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false }),
     audit: () => {},
     anchors: () => [ANCHOR],
+    cachedEnvironment: () => options.environment,
   } as unknown as RemoteWorld
 }
 
@@ -243,6 +248,52 @@ test('a remote execution splits its streams and marks stderr on the read cursor'
   assert.equal(read.lossy, false)
   assert.equal(execution.readOutput().delta, '', 'the consuming cursor never re-delivers')
   assert.equal(execution.status, 'completed')
+})
+
+/** A cached verdict for a machine whose probe found no ripgrep. */
+const RG_MISSING: RemoteEnvironment = parseEnvironment([
+  'os\tLinux',
+  'arch\taarch64',
+  'bash\tGNU bash, version 5.1.16(1)-release',
+  'rg\t',
+  'rgver\t',
+  'git\t/usr/bin/git',
+  'tar\t/usr/bin/tar',
+  'curl\t/usr/bin/curl',
+  'wget\t',
+  'sudo\t',
+  'home\t/home/dev',
+  'homew\t1',
+  'path\t/home/dev/bin:/usr/bin',
+  'writepath\t/home/dev/bin',
+].join('\n'), 'm1', '2026-01-01T00:00:00.000Z')
+
+test('a remote command failing on a missing rg explains itself in stderr', async () => {
+  const world = fakeWorld({
+    classifyHost: () => ({ kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }),
+    exitCode: 127,
+    channel: { stderr: ['bash: rg: command not found\n'] },
+    environment: RG_MISSING,
+  })
+  const executor = new RoutingBashExecutor(harness(), bashConfig(), world)
+  const result = await (await executor.execute(spec(ANCHOR.dir, 'rg TODO src'))).result()
+  assert.equal(result.exitCode, 127)
+  assert.match(result.stderr.text, /bash: rg: command not found/, 'the shell evidence stays')
+  assert.match(result.stderr.text, /\[env\] ripgrep/, 'the hint follows the failure')
+  assert.match(result.stderr.text, /aarch64-unknown-linux-musl/, 'the cached arch picks the static route')
+  assert.match(result.stderr.text, /Settings → 远程开发 → 环境检查/, 'the hint names the settings page')
+})
+
+test('a 127 with unrelated stderr is left alone', async () => {
+  const world = fakeWorld({
+    classifyHost: () => ({ kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }),
+    exitCode: 127,
+    channel: { stderr: ['bash: nosuchcmd: command not found\n'] },
+    environment: RG_MISSING,
+  })
+  const executor = new RoutingBashExecutor(harness(), bashConfig(), world)
+  const result = await (await executor.execute(spec(ANCHOR.dir, 'nosuchcmd'))).result()
+  assert.equal(result.stderr.text, 'bash: nosuchcmd: command not found\n')
 })
 
 test('a remote command outliving its deadline is killed and classified timedOut', async () => {

@@ -65,6 +65,7 @@ export function apply(ctx: ClientContext): void {
       listForwards: api.listForwards,
       openForward: api.openForward,
       closeForward: api.closeForward,
+      checkEnvironment: api.checkEnvironment,
       t,
     }),
   }, MachinesSection))

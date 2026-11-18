@@ -38,7 +38,8 @@ import { registerPrompt } from './prompt.ts'
 import { registerToolVisibility } from './tool-visibility.ts'
 import { registerRoutes } from './routes.ts'
 import { ForwardManager } from './forward.ts'
-import { registerForwardTools } from './tools.ts'
+import { registerForwardTools, registerSessionTools } from './tools.ts'
+import { registerEnvironmentWarmup } from './remote-env.ts'
 
 export const name = '@jackguo0310/dsh-remote'
 
@@ -122,12 +123,19 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
 
   registerPrompt(ctx, world)
   registerToolVisibility(ctx, world)
+  // A session that starts on a remote workspace warms its machine's
+  // environment verdict in the background, so the first failed search can name
+  // the fix without probing from inside an error path.
+  registerEnvironmentWarmup(ctx, world)
 
-  // The forwarding tools are optional: a composition without a tool registry
-  // (or with the tools service hidden) still serves the settings page and the
-  // file tab, so their absence must not fail the whole plugin load.
-  ctx.inject(['tools'], (toolCtx) => {
+  // The tools are optional: a composition without a tool registry (or with the
+  // tools service hidden) still serves the settings page and the file tab, so
+  // their absence must not fail the whole plugin load. `fs`, `sandboxPolicy`,
+  // and `shell` are this plugin's own providers, declared so the tool bodies
+  // may read them without a bare ancestor-walk crash.
+  ctx.inject(['tools', 'fs', 'sandboxPolicy', 'shell'], (toolCtx) => {
     registerForwardTools(toolCtx, world, forwards)
+    registerSessionTools(toolCtx, world)
   })
 
   ctx.inject(['webServer'], (serviceCtx) => {

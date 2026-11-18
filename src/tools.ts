@@ -9,8 +9,16 @@
  * @module dsh-remote-development/tools
  */
 
+import path from 'node:path'
+import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-fs'
+import type {} from '@deepseek-ai/dsh-shell'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type { ForwardManager, ForwardRecord } from './forward.ts'
 import type { RemoteWorld } from './world.ts'
 
@@ -59,6 +67,151 @@ function wire(record: ForwardRecord): Record<string, unknown> {
     localPort: record.localPort,
     url: record.url,
   }
+}
+
+/**
+ * The local directory a `bash_local` call runs in. `~` and `~/x` expand to the
+ * host home, anything else resolves as a path on the host. A directory under an
+ * anchor is refused: that path is a handle for a remote workspace, and running
+ * a local command "in" it would silently act on the wrong machine.
+ * @param world - the remote world (path classification).
+ * @param raw - the caller's `workdir`, if any.
+ * @returns the absolute local working directory.
+ */
+export function localWorkdir(world: Pick<RemoteWorld, 'classifyHostPath'>, raw: string | undefined): string {
+  const home = homedir()
+  const wanted = String(raw ?? '').trim()
+  const expanded = wanted === '' || wanted === '~'
+    ? home
+    : wanted.startsWith('~/') || wanted.startsWith('~\\')
+      ? path.join(home, wanted.slice(2))
+      : wanted
+  const abs = path.resolve(expanded)
+  if (world.classifyHostPath(abs).kind === 'remote') {
+    throw new Error(`"${abs}" is the local handle of a remote workspace; use the bash tool for commands that must run there`)
+  }
+  return abs
+}
+
+/**
+ * A policy carrying the calling session's mode but a workspace root on THIS
+ * machine. The session's root is the remote workspace (or its anchor handle),
+ * which a local sandbox compares against absolute local paths — passing it
+ * unchanged would deny every local write under `workspace-write`.
+ * @param base - the session-resolved policy (mode and session identity).
+ * @param localRoot - the absolute host directory the command runs in.
+ * @returns the same policy, re-rooted locally.
+ */
+export function localPolicy(base: SandboxExecutionPolicy, localRoot: string): SandboxExecutionPolicy {
+  return { ...base, workspaceRoot: localRoot }
+}
+
+/**
+ * Register the two explicit local/remote channels on the tool registry:
+ * `fs_remove` (the host has no model-facing delete tool) and `bash_local` (a
+ * session whose workspace is remote otherwise has no way to run a command on
+ * the machine DSH itself runs on). Transparent routing still covers everything
+ * else; these exist because routing alone cannot express either intent.
+ * @param ctx - context carrying `tools`, `fs`, `sandboxPolicy`, and `shell`.
+ * @param world - the remote world (path classification for `bash_local`).
+ */
+export function registerSessionTools(ctx: Context, world: RemoteWorld): void {
+  // The calling session selects the mode; an agentless call (a scripted
+  // dispatch) falls back to the deployment policy. `exactOptionalPropertyTypes`
+  // rejects `{ session: undefined }`, so the request is built conditionally.
+  const policyOf = (exec: ToolRunContext): SandboxExecutionPolicy => {
+    const session = exec.agent?.session
+    return ctx.sandboxPolicy.resolve(session === undefined ? {} : { session })
+  }
+
+  ctx.tools.register(defineTool({
+    name: 'fs_remove',
+    description:
+      'Delete one file. A path inside the workspace deletes on whichever side serves it: a remote workspace deletes over SFTP, '
+      + 'a local workspace deletes through the local sandbox. Refuses directories and other non-regular files, and never deletes a file '
+      + 'whose content changed since it was read.',
+    parameters: {
+      path: { type: 'string', required: true, description: 'File to delete: absolute, or relative to the workspace directory.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          path: { type: 'string', required: true },
+          removed: { type: 'boolean', required: true },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.removed ? `Removed ${value.path}.` : `No file was removed at ${value.path}.`,
+      }],
+    },
+    execute: async (args, exec) => {
+      const cwd = exec.agent?.session?.header?.cwd ?? process.cwd()
+      const target = await ctx.fs.resolve(args.path, { cwd })
+      const policy = policyOf(exec)
+      await ctx.fs.deleteFile(target, undefined, exec.signal, policy)
+      return { path: target.displayPath, removed: true }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'bash_local',
+    description:
+      'Run one command on the machine DSH itself runs on, in a local directory. Use it from a remote workspace session when the command '
+      + 'must act on THIS machine — the plain bash tool follows the workspace and therefore runs remotely. The command runs under the '
+      + 'local sandbox with the session\'s mode, confined to the local working directory.',
+    parameters: {
+      command: { type: 'string', required: true, description: 'Command text for the local shell (bash on POSIX, pwsh on Windows).' },
+      workdir: { type: 'string', description: 'Local directory to run in. `~` expands to the home directory; defaults to the home directory.' },
+      timeoutMs: { type: 'integer', description: 'Optional deadline in milliseconds; the shell executor still applies its own cap.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          command: { type: 'string', required: true },
+          workdir: { type: 'string', required: true },
+          exitCode: { type: 'integer' },
+          stdout: { type: 'string', required: true },
+          stderr: { type: 'string', required: true },
+          timedOut: { type: 'boolean', required: true },
+          truncated: { type: 'boolean', required: true },
+        },
+      },
+      render: (_args, value) => {
+        const parts = [value.stdout]
+        if (value.stderr !== '') parts.push(`[stderr]\n${value.stderr}`)
+        if (value.exitCode !== undefined && value.exitCode !== 0) parts.push(`[exit code: ${value.exitCode}]`)
+        if (value.timedOut) parts.push('[timed out]')
+        if (value.truncated) parts.push('[output truncated]')
+        return [{ type: 'text', text: parts.filter((part) => part !== '').join('\n') || '(no output)' }]
+      },
+    },
+    execute: async (args, exec) => {
+      const workdir = localWorkdir(world, args.workdir)
+      const policy = localPolicy(policyOf(exec), workdir)
+      const spec = ctx.shell.resolve({
+        command: args.command,
+        workdir,
+        sandboxPolicy: policy,
+        signal: exec.signal,
+        ...(args.timeoutMs === undefined ? {} : { timeoutMs: Number(args.timeoutMs) }),
+      })
+      const result = await (await ctx.shell.execute(spec)).result()
+      return {
+        command: args.command,
+        workdir,
+        ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+        stdout: result.stdout.text,
+        stderr: result.stderr.text,
+        timedOut: result.timedOut,
+        truncated: result.stdout.truncated || result.stderr.truncated,
+      }
+    },
+  }))
 }
 
 /**
