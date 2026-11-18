@@ -230,6 +230,20 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
     })()
   }, [injected, machineId, path, load])
 
+  // Highlighting is only rebuilt for the read view (never per keystroke of the
+  // editor): the preview shows the current draft, so an unsaved edit is visible
+  // the moment the operator switches back. These hooks sit ABOVE the early
+  // returns — a hook after a conditional return changes the hook count between
+  // renders (React error #310).
+  const highlighted = useMemo(
+    () => (opened !== null && fileState === 'ready' && !editing ? highlightCode(draft, opened.name) : ''),
+    [draft, editing, fileState, opened],
+  )
+  const gutter = useMemo(
+    () => (opened !== null && fileState === 'ready' && !editing ? lineNumbers(draft) : ''),
+    [draft, editing, fileState, opened],
+  )
+
   if (!resolved) {
     return createElement('div', { className: 'rdv-files' },
       createElement('div', { className: 'rdv-empty' }, t('files.loading')))
@@ -242,17 +256,6 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   }
 
   const dirty = fileState === 'ready' && draft !== savedText
-  // Highlighting is only rebuilt for the read view (never per keystroke of the
-  // editor): the preview shows the current draft, so an unsaved edit is visible
-  // the moment the operator switches back.
-  const highlighted = useMemo(
-    () => (opened !== null && fileState === 'ready' && !editing ? highlightCode(draft, opened.name) : ''),
-    [draft, editing, fileState, opened],
-  )
-  const gutter = useMemo(
-    () => (opened !== null && fileState === 'ready' && !editing ? lineNumbers(draft) : ''),
-    [draft, editing, fileState, opened],
-  )
   const download = (target: string): void => {
     const anchor = document.createElement('a')
     anchor.href = injected.remoteDownloadUrl(machineId, target)
