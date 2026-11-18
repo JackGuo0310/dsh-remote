@@ -1,6 +1,6 @@
 {
   "name": "@jackguo0310/dsh-remote",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Lightweight remote development for DeepSeek Harness: pick a remote workspace over SSH and let the agent work on it with the SAME local tools — file, shell, and search providers are routed to the remote host by the plugin. Adds a remote-file browser tab inside dsh-better-sidebar (upload/download over SFTP) and on-demand loopback port forwarding.",
   "license": "MIT",
   "keywords": [
@@ -51,7 +51,8 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4 || 3.18.5-alpha.1",
-    "highlight.js": "^11.12.0"
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.1.0",
@@ -74,7 +75,6 @@
     "@deepseek-ai/dsh-tools": ">=0.1.7-alpha.1 <0.3.0"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-error": "0.2.2-rc.3",
     "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh-agent": "0.2.2-rc.3",
     "@deepseek-ai/dsh-bash-local": "0.2.2-rc.3",
@@ -87,6 +87,7 @@
     "@deepseek-ai/dsh-client-ui-settings": "0.2.2-rc.3",
     "@deepseek-ai/dsh-client-ui-slots": "0.2.2-rc.3",
     "@deepseek-ai/dsh-client-ui-workspace": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-error": "0.2.2-rc.3",
     "@deepseek-ai/dsh-fs": "0.2.2-rc.3",
     "@deepseek-ai/dsh-fs-local": "0.2.2-rc.3",
     "@deepseek-ai/dsh-fs-sandbox": "0.2.2-rc.3",
@@ -101,10 +102,10 @@
     "@deepseek-ai/dsh-scope": "0.2.2-rc.3",
     "@deepseek-ai/dsh-session": "0.2.2-rc.3",
     "@deepseek-ai/dsh-session-persistence": "0.2.2-rc.3",
-    "@deepseek-ai/dsh-storage": "0.2.2-rc.3",
-    "@deepseek-ai/dsh-storage-domain": "0.2.2-rc.3",
     "@deepseek-ai/dsh-session-projection": "0.2.2-rc.3",
     "@deepseek-ai/dsh-shell": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-storage": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-storage-domain": "0.2.2-rc.3",
     "@deepseek-ai/dsh-subprocess": "0.2.2-rc.3",
     "@deepseek-ai/dsh-subprocess-local": "0.2.2-rc.3",
     "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.3",
@@ -114,6 +115,7 @@
     "@deepseek-ai/dsh-user-approval": "0.2.2-rc.3",
     "@deepseek-ai/dsh-util-values": "0.2.2-rc.3",
     "@deepseek-ai/dsh-workspace": "0.2.2-rc.3",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "@types/ssh2": "^1.15.0",

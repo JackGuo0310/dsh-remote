@@ -81,6 +81,34 @@ body[data-ds-dark-theme] .rdv-select { color-scheme: dark; }
 .rdv-filesEditor { flex: 1; box-sizing: border-box; width: 100%; min-height: 0; resize: none; border: none; outline: none; padding: 8px 10px; background: transparent; color: var(--dsw-alias-label-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 18px; tab-size: 2; }
 .rdv-filesImage { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; align-items: flex-start; justify-content: center; }
 .rdv-filesImage img { max-width: 100%; height: auto; }
+/* Rendered Markdown, laid out like the sidebar editor's preview: comfortable
+   measure, heading scale from the theme's type ramp, code blocks reusing the
+   viewer's highlight palette. */
+.rdv-markdown { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px 24px; line-height: 1.65; font-size: 13px; color: var(--dsw-alias-label-primary); overflow-wrap: break-word; }
+.rdv-markdown > :first-child { margin-top: 0; }
+.rdv-markdown h1, .rdv-markdown h2, .rdv-markdown h3, .rdv-markdown h4, .rdv-markdown h5, .rdv-markdown h6 { margin: 1.2em 0 0.5em; line-height: 1.3; font-weight: 600; }
+.rdv-markdown h1 { font-size: 1.7em; padding-bottom: 0.3em; border-bottom: 1px solid var(--dsw-alias-border-l4); }
+.rdv-markdown h2 { font-size: 1.4em; padding-bottom: 0.25em; border-bottom: 1px solid var(--dsw-alias-border-l4); }
+.rdv-markdown h3 { font-size: 1.2em; }
+.rdv-markdown h4 { font-size: 1.05em; }
+.rdv-markdown h5, .rdv-markdown h6 { font-size: 1em; color: var(--dsw-alias-label-secondary); }
+.rdv-markdown p, .rdv-markdown ul, .rdv-markdown ol, .rdv-markdown blockquote, .rdv-markdown table, .rdv-markdown pre { margin: 0.6em 0; }
+.rdv-markdown a { color: var(--dsw-alias-state-business-primary, #3b82f6); text-decoration: none; }
+.rdv-markdown a:hover { text-decoration: underline; }
+.rdv-markdown ul, .rdv-markdown ol { padding-left: 1.6em; }
+.rdv-markdown li { margin: 0.2em 0; }
+.rdv-markdown li > ul, .rdv-markdown li > ol { margin: 0.2em 0; }
+.rdv-markdown input[type="checkbox"] { margin: 0 0.4em 0 0; vertical-align: middle; }
+.rdv-markdown blockquote { padding: 0.2em 0.9em; border-left: 3px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); border-radius: 0 4px 4px 0; }
+.rdv-markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; padding: 0.12em 0.35em; border-radius: 3px; background: var(--dsw-alias-bg-layer-2); }
+.rdv-markdown pre { padding: 10px 12px; overflow: auto; border-radius: 6px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l4); }
+.rdv-markdown pre code { padding: 0; background: transparent; font-size: 12px; line-height: 1.5; }
+.rdv-markdown table { border-collapse: collapse; display: block; max-width: 100%; overflow: auto; }
+.rdv-markdown th, .rdv-markdown td { padding: 5px 10px; border: 1px solid var(--dsw-alias-border-l3); }
+.rdv-markdown th { background: var(--dsw-alias-bg-layer-2); font-weight: 600; }
+.rdv-markdown tr:nth-child(2n) td { background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 60%, transparent); }
+.rdv-markdown hr { height: 1px; margin: 1.4em 0; border: 0; background: var(--dsw-alias-border-l3); }
+.rdv-markdown img { max-width: 100%; height: auto; }
 .rdv-filesNote { flex: none; padding: 4px 10px; border-top: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
 /* Read view. One scrolling surface holds a sticky gutter and the highlighted
    source; both share the same 18px line grid, so numbers stay aligned. The

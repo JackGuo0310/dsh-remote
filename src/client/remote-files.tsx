@@ -18,6 +18,7 @@ import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteFileEntry } from './api.ts'
 import { highlightCode, lineNumbers } from './code-highlight.ts'
+import { isMarkdownName, renderMarkdown } from './markdown.ts'
 import { useRemoteSession } from './session-scope.ts'
 
 /** Host calls the tab needs, bound once by the plugin (keeps props referentially stable). */
@@ -135,6 +136,8 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
   const [saveNote, setSaveNote] = useState('')
   /** Text files open as a highlighted read view; editing is an explicit step. */
   const [editing, setEditing] = useState(false)
+  /** Markdown opens as a rendered preview; this switches to the source text. */
+  const [markdownSource, setMarkdownSource] = useState(false)
 
   // Monotonic tokens: a slow listing/file read must not overwrite a newer one.
   const token = useRef(0)
@@ -179,6 +182,7 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
     setOpened({ path: entry.path, name: entry.name })
     setFileState('loading')
     setEditing(false)
+    setMarkdownSource(false)
     setFileError('')
     setSaveNote('')
     setSavedText('')
@@ -421,6 +425,29 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
       }
       // The walking view: one scrolling surface holds a sticky line-number
       // gutter and the highlighted source, so both share a line grid.
+      if (isMarkdownName(opened.name) && !markdownSource) {
+        return createElement('div', {
+          className: 'rdv-markdown',
+          dangerouslySetInnerHTML: {
+            __html: renderMarkdown(draft, {
+              // A relative image cannot be fetched by the page; point it at the
+              // file's own download route, which serves the right bytes.
+              image: (src) => {
+                if (/^(?:[a-z]+:)?\/\//i.test(src) || src.startsWith('data:')) return null
+                const dir = opened.path.slice(0, opened.path.lastIndexOf('/'))
+                const rest = src.replace(/^\.\//, '')
+                const parts: string[] = []
+                for (const part of `${dir}/${rest}`.split('/')) {
+                  if (part === '' || part === '.') continue
+                  if (part === '..') { parts.pop(); continue }
+                  parts.push(part)
+                }
+                return injected.remoteDownloadUrl(machineId, '/' + parts.join('/'))
+              },
+            }),
+          },
+        })
+      }
       return createElement('div', { className: 'rdv-codeWrap' },
         createElement('div', { className: 'rdv-codeGutter', 'aria-hidden': true }, gutter),
         createElement('pre', { className: 'rdv-code' },
@@ -434,6 +461,11 @@ export function RemoteFiles(props: RemoteFilesProps & { injected: RemoteFilesInj
           createElement('span', { className: 'rdv-filesViewerName', title: opened.path }, opened.name),
           createElement('span', { className: 'rdv-filesSize' }, sizeText(fileSize)),
           createElement(Button, { size: 'sm', onClick: () => download(opened.path) }, t('files.download')),
+          fileState === 'ready' && isMarkdownName(opened.name) && !editing && createElement(Button, {
+            size: 'sm',
+            variant: 'outline',
+            onClick: () => setMarkdownSource((source) => !source),
+          }, markdownSource ? t('files.markdownPreview') : t('files.markdownSource')),
           fileState === 'ready' && !IMAGE_EXTENSIONS.test(opened.name) && createElement(Button, {
             size: 'sm',
             variant: 'outline',
