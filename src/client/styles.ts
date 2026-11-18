@@ -163,6 +163,65 @@ body[data-ds-dark-theme] .rdv-code .hljs-link { color: #61afef; }
 .rdv-gitSubject { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
 .rdv-gitRef { flex: none; padding: 0 5px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 14px; }
 .rdv-gitMeta { flex: none; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+/* ── Remote Git panel, shaped like the host's own Git lens ─────────────── */
+.rdv-gitRoot { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
+.rdv-gitRepoBar { display: flex; align-items: flex-end; gap: 2px; flex: none; padding: 4px 8px 0; border-bottom: 1px solid var(--dsw-alias-border-l4); overflow: hidden; }
+.rdv-gitRepoTab { flex: none; max-width: 100%; padding: 3px 8px; border-radius: 6px 6px 0 0; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdv-gitScroll { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
+.rdv-gitSection { display: flex; flex-direction: column; flex: none; min-height: 0; }
+.rdv-gitSectionGrow { flex: 1; }
+.rdv-gitHead { display: flex; align-items: center; gap: 4px; flex: none; height: 28px; padding: 0 6px 0 4px; }
+.rdv-gitHeadActions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.rdv-gitDisclosure { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-strong-12); cursor: pointer; text-align: left; }
+.rdv-gitChevron { display: inline-flex; color: var(--dsw-alias-label-tertiary); transition: transform 120ms ease; }
+.rdv-gitChevron[data-open="true"] { transform: rotate(90deg); }
+.rdv-gitIconAction { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 1; cursor: pointer; }
+.rdv-gitIconAction:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.rdv-gitIconAction:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; opacity: 0.6; }
+.rdv-gitSectionBody { display: flex; flex-direction: column; min-height: 0; padding-bottom: 6px; }
+.rdv-gitMessageBox { flex: none; margin: 0 8px 6px; }
+.rdv-gitMessageInput { display: block; width: 100%; box-sizing: border-box; min-height: 28px; max-height: 96px; resize: vertical; padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 4px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-12); }
+.rdv-gitMessageInput:focus { outline: none; border-color: var(--dsw-alias-border-l1); }
+.rdv-gitClean { padding: 8px 10px; }
+.rdv-gitGroup { display: flex; flex-direction: column; flex: none; }
+.rdv-gitGroupHead { display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px 0 4px; }
+.rdv-gitGroupHead .rdv-gitDisclosure { font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-secondary); }
+.rdv-gitGroupAction { flex: none; width: 20px; height: 20px; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 1; cursor: pointer; }
+.rdv-gitGroupAction:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.rdv-gitGroupBody { display: flex; flex-direction: column; }
+.rdv-gitChangeRow { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 10px; cursor: pointer; }
+.rdv-gitChangeRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.rdv-gitChangeIcon { flex: none; display: inline-flex; width: 14px; justify-content: center; color: var(--dsw-alias-label-secondary); }
+.rdv-gitChangeName { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdv-gitChangePath { flex: 1; min-width: 0; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdv-gitChangeCode { flex: none; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
+.rdv-gitChangeAction { flex: none; width: 20px; height: 20px; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1; cursor: pointer; opacity: 0; }
+.rdv-gitChangeRow:hover .rdv-gitChangeAction { opacity: 1; }
+.rdv-gitChangeAction:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+.rdv-gitGraphBody { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.rdv-gitGraphToolbar { flex: none; padding: 0 8px 6px; }
+.rdv-gitSelect { display: block; width: 100%; box-sizing: border-box; height: 28px; padding: 0 6px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 3px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-12); }
+.rdv-gitGraphList { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.rdv-gitGraphRow { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 8px 0 4px; border: 0; background: transparent; color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxs-12); text-align: left; cursor: pointer; }
+.rdv-gitGraphRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.rdv-gitGraphRowOpen { background: var(--dsw-alias-interactive-bg-active); }
+.rdv-gitRail { flex: none; overflow: visible; }
+.rdv-gitLane { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.rdv-gitLane.c0, .rdv-gitNode.c0 { color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary)); }
+.rdv-gitLane.c1, .rdv-gitNode.c1 { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary)); }
+.rdv-gitLane.c2, .rdv-gitNode.c2 { color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary)); }
+.rdv-gitLane.c3, .rdv-gitNode.c3 { color: var(--dsw-alias-state-error-primary, var(--dsw-alias-label-primary)); }
+.rdv-gitLane.c4, .rdv-gitNode.c4 { color: var(--dsw-alias-label-secondary); }
+.rdv-gitNode { fill: currentColor; stroke: var(--dsw-alias-bg-layer-1); stroke-width: 1; }
+.rdv-gitPills { display: inline-flex; align-items: center; gap: 3px; flex: none; min-width: 0; max-width: 60%; overflow: hidden; }
+.rdv-gitPill { flex: none; max-width: 140px; height: 16px; padding: 0 5px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 4px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); line-height: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdv-gitPillHead { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+.rdv-gitPillTag { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3b82f6) 16%, transparent); color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary)); font-family: var(--dsw-font-mono, monospace); }
+.rdv-gitSubject { flex: 1; min-width: 0; padding-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdv-gitSha { flex: none; color: var(--dsw-alias-label-tertiary); font-family: var(--dsw-font-mono, monospace); font-size: 10px; }
+.rdv-gitFooter { display: flex; align-items: center; gap: 6px; flex: none; padding: 4px 8px; border-top: 1px solid var(--dsw-alias-border-l4); }
+.rdv-gitBranchChip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); }
+.rdv-gitSync { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
 `
 
 /** Inject the stylesheet once (idempotent across plugin reloads). */

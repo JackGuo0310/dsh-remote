@@ -127,6 +127,8 @@ export interface GitCommit {
   time: number
   /** Ref names pointing at this commit, as `%D` prints them. */
   refs: string[]
+  /** Parent hashes; the graph's lane layout needs them. */
+  parents: string[]
   subject: string
 }
 
@@ -144,9 +146,11 @@ const RECORD = '\u001e'
  * @param limit - commits to ask for.
  * @returns the command line.
  */
-export function gitLogCommand(root: string, limit: number = GIT_LOG_LIMIT): string {
+export function gitLogCommand(root: string, limit: number = GIT_LOG_LIMIT, all = true): string {
   const count = Math.max(1, Math.min(1000, Math.trunc(limit)))
-  return `git ${dir(root)} --no-pager log -n ${count} --date=unix --pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%s%x1e`
+  // `--all` matches the native graph's default ("所有分支"); the current branch
+  // alone is the other choice.
+  return `git ${dir(root)} --no-pager log ${all ? '--all ' : ''}-n ${count} --date=unix --pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%P%x1f%s%x1e`
 }
 
 /**
@@ -169,7 +173,7 @@ export function parseGitLog(raw: string): GitCommit[] {
   for (const record of raw.split(RECORD)) {
     const trimmed = record.replace(/^\s+/, '')
     if (trimmed === '') continue
-    const [hash = '', short = '', author = '', at = '', refs = '', subject = ''] = trimmed.split(FIELD)
+    const [hash = '', short = '', author = '', at = '', refs = '', parents = '', subject = ''] = trimmed.split(FIELD)
     const time = Number.parseInt(at, 10)
     if (hash === '') continue
     commits.push({
@@ -178,6 +182,7 @@ export function parseGitLog(raw: string): GitCommit[] {
       author,
       time: Number.isFinite(time) ? time : 0,
       refs: refs.split(',').map((ref) => ref.trim()).filter((ref) => ref !== ''),
+      parents: parents.split(' ').filter((parent) => parent !== ''),
       subject,
     })
   }

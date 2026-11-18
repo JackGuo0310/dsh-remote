@@ -96,10 +96,12 @@ test('a huge status stops at the cap and says so', () => {
 
 test('the log asks for a bounded, separator-delimited history', () => {
   const command = gitLogCommand('/repo', 50)
-  assert.match(command, /^git -C '\/repo' --no-pager log -n 50 --date=unix --pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%s%x1e$/)
+  assert.match(command, /^git -C '\/repo' --no-pager log --all -n 50 --date=unix --pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%P%x1f%s%x1e$/)
   // The limit is clamped, so a client cannot ask for the entire history.
-  assert.match(gitLogCommand('/repo', 100000), /log -n 1000 /)
-  assert.match(gitLogCommand('/repo', 0), /log -n 1 /)
+  assert.match(gitLogCommand('/repo', 100000), /log --all -n 1000 /)
+  assert.match(gitLogCommand('/repo', 0), /log --all -n 1 /)
+  // The current branch alone drops --all.
+  assert.doesNotMatch(gitLogCommand('/repo', 50, false), /--all/)
 })
 
 test('a show only accepts a validated hash and prints one commit', () => {
@@ -108,8 +110,8 @@ test('a show only accepts a validated hash and prints one commit', () => {
 
 test('the log parser keeps subjects and refs intact across records', () => {
   const raw = [
-    'e1f2...full1\u001fabc123\u001fAlice\u001f1700000000\u001fHEAD -> main, origin/main\u001fa subject; with "punctuation"\u001e',
-    'dead...full2\u001fdef456\u001fBob\u001f1699999999\u001f\u001fsecond\u001e',
+    'e1f2...full1\u001fabc123\u001fAlice\u001f1700000000\u001fHEAD -> main, origin/main\u001fpp1 pp2\u001fa subject; with "punctuation"\u001e',
+    'dead...full2\u001fdef456\u001fBob\u001f1699999999\u001f\u001fpp1\u001fsecond\u001e',
   ].join('')
   const commits = parseGitLog(raw)
   assert.equal(commits.length, 2)
@@ -118,8 +120,10 @@ test('the log parser keeps subjects and refs intact across records', () => {
   assert.equal(commits[0]!.author, 'Alice')
   assert.equal(commits[0]!.time, 1_700_000_000)
   assert.deepEqual(commits[0]!.refs, ['HEAD -> main', 'origin/main'])
+  assert.deepEqual(commits[0]!.parents, ['pp1', 'pp2'])
   assert.equal(commits[0]!.subject, 'a subject; with "punctuation"')
   assert.deepEqual(commits[1]!.refs, [])
+  assert.deepEqual(commits[1]!.parents, ['pp1'])
   assert.equal(commits[1]!.subject, 'second')
   // Empty separators (git's trailing newline) produce no phantom commits.
   assert.deepEqual(parseGitLog('\u001e'), [])

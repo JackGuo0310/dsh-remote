@@ -343,12 +343,19 @@ export interface RemoteGitCommit {
   time: number
   /** Ref names pointing at this commit. */
   refs: string[]
+  /** Parent hashes, used by the graph's lane layout. */
+  parents: string[]
   subject: string
 }
 
 /** Read the remote repository's commit history, newest first. */
-export function gitLog(machineId: string, path: string, limit?: number): Promise<{ ok: boolean; commits?: RemoteGitCommit[]; root?: string; isRepo?: boolean; error?: string }> {
-  return gitPost('/git/log', { machineId, path, ...(limit === undefined ? {} : { limit }) })
+export function gitLog(machineId: string, path: string, limit?: number, all?: boolean): Promise<{ ok: boolean; commits?: RemoteGitCommit[]; root?: string; isRepo?: boolean; error?: string }> {
+  return gitPost('/git/log', {
+    machineId,
+    path,
+    ...(limit === undefined ? {} : { limit }),
+    ...(all === undefined ? {} : { all }),
+  })
 }
 
 /** Read one commit's metadata and patch. */

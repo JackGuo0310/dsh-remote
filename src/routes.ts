@@ -573,7 +573,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         try {
           const root = await repoRoot(ref, target)
           if (root === null) return sendJson(res, 200, { ok: true, commits: [], isRepo: false })
-          const result = await world.execOn(ref, gitLogCommand(root, limit), { timeoutMs: world.config.commandTimeoutMs })
+          const result = await world.execOn(ref, gitLogCommand(root, limit, body.all !== false), { timeoutMs: world.config.commandTimeoutMs })
           if (result.code !== 0) {
             // An unborn branch has no history to show; that is an empty log,
             // not a failure of the remote command.
