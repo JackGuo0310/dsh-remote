@@ -92,21 +92,27 @@ export function remoteTerminalCommand(remotePath: string, spec: SubprocessTermin
     'if [ -r "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile";'
       + ' elif [ -r "$HOME/.bash_login" ]; then . "$HOME/.bash_login";'
       + ' elif [ -r "$HOME/.profile" ]; then . "$HOME/.profile"; fi',
-    // The visible prompt is printed by PROMPT_COMMAND *before* the marker: the
-    // host emulator only accepts `dsh> ` as the text following OSC 133;D
-    // (exactly, within six characters), so anything else shown as the prompt
-    // must come earlier on the line. The controlled token itself is drawn
-    // concealed, which keeps the terminal looking like the machine's own.
+    // The whole prompt is built inside PS1, not printed by PROMPT_COMMAND:
+    // readline only measures the text it prints itself, so a prompt printed
+    // around it makes its column math wrong (typed text drifts right of the
+    // prompt). The visible part is `user@host:path`; the host emulator only
+    // accepts `dsh> ` as the text following OSC 133;D (exactly, within six
+    // characters), so the controlled token sits after the marker and is drawn
+    // concealed.
     '__rdv_prompt() {',
     '  __rdv_status=$?',
     '  __rdv_host=${HOSTNAME%%.*}',
     '  [ -n "$__rdv_host" ] || __rdv_host=$(hostname -s 2>/dev/null || uname -n)',
     '  __rdv_path=$PWD',
     '  case $__rdv_path in "$HOME") __rdv_path=\'~\';; "$HOME"/*) __rdv_path=~${__rdv_path#"$HOME"};; esac',
-    '  printf \'\\033[1;32m%s@%s\\033[0m:\\033[1;36m%s\\033[0m\' "${USER:-$(id -un 2>/dev/null)}" "$__rdv_host" "$__rdv_path"',
-    '  printf \'\\033]133;D;%s\\007\' "$__rdv_status"',
+    '  PS1="\\[\\033[1;32m\\]${USER:-$(id -un 2>/dev/null)}@${__rdv_host}\\[\\033[0m\\]:'
+      + '\\[\\033[1;36m\\]${__rdv_path}\\[\\033[0m\\]'
+      // The whole marker + controlled token sits inside one readline
+      // non-printing region, and the cursor steps back over the token's cells:
+      // the token is emitted (the host emulator must read `dsh> ` there) but
+      // neither shown nor counted, so typing starts right after the path.
+      + '\\[\\033]133;D;${__rdv_status}\\007\\033[8mdsh> \\033[0m\\033[5D\\]"',
     '}',
-    `PS1=${shq('\\[\\033[8m\\]dsh> \\[\\033[0m\\]')}`,
     'PROMPT_COMMAND=__rdv_prompt',
     'DSH_RDV_RC',
     `exec bash --rcfile ${shq(rcFile)} -i`,

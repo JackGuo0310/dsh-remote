@@ -82,16 +82,22 @@ test('the bootstrap cd-guards, records its pid, and loads the machine profile', 
   assert.match(command, /\$HOME\/\.profile/)
   // The prompt and marker come after the profile, which would otherwise win.
   const rc = command.slice(command.indexOf('DSH_RDV_RC'))
-  assert.ok(rc.indexOf('PS1=') > rc.indexOf('$HOME/.profile'), 'the host prompt text is set last')
+  assert.ok(rc.indexOf('__rdv_prompt()') > rc.indexOf('$HOME/.profile'), 'the host prompt is installed last')
   assert.ok(command.includes('PROMPT_COMMAND=__rdv_prompt'))
-  assert.ok(command.includes(']133;D;%s'), 'the emulator reads OSC 133;D as readiness')
-  // The visible prompt (user@host:path) is printed before the marker, because
-  // the host emulator only accepts `dsh> ` as the text after OSC 133;D.
-  const promptFn = command.slice(command.indexOf('__rdv_prompt()'), command.indexOf('PS1='))
-  assert.match(promptFn, /\\033\[1;32m%s@%s\\033\[0m/, 'the prompt shows user@host in color')
-  assert.match(promptFn, /\\033\[1;36m%s\\033\[0m/, 'and the working directory')
-  assert.ok(promptFn.indexOf('__rdv_path') < promptFn.indexOf(']133;D;'), 'the path precedes the marker, on the same line')
-  assert.ok(command.includes('\\[\\033[8m\\]dsh> \\[\\033[0m\\]'), 'the controlled token itself is drawn concealed')
+  // The whole prompt is assigned to PS1 — readline only measures what it
+  // prints itself, so the visible prompt must not be printed around it.
+  const fn = command.slice(command.indexOf('__rdv_prompt()'), command.indexOf('PROMPT_COMMAND=__rdv_prompt'))
+  assert.ok(fn.includes('PS1="'), 'PROMPT_COMMAND builds PS1 instead of printing it')
+  assert.ok(!fn.includes("printf '\\033]133;D"), 'the marker is not printed separately from the prompt')
+  assert.match(fn, /\\033\[1;32m\\]/, 'the prompt shows user@host in color')
+  assert.match(fn, /\\033\[1;36m\\]/, 'and the working directory')
+  assert.ok(fn.indexOf('${__rdv_path}') < fn.indexOf(']133;D;'), 'the path precedes the marker on the same line')
+  assert.ok(fn.includes(']133;D;${__rdv_status}'), 'the marker carries the last exit status')
+  // Marker and controlled token live inside ONE readline non-printing region,
+  // and the cursor steps back over the token's cells: the emulator reads
+  // `dsh> ` after the marker, while the prompt ends where the path ends.
+  assert.match(fn, /\\\[\\033\]133;D;\$\{__rdv_status\}\\007\\033\[8mdsh> \\033\[0m\\033\[5D\\\]/,
+    'the controlled token is emitted but neither shown nor counted')
   assert.ok(command.endsWith(`exec bash --rcfile '/tmp/.term.rc' -i`), 'the shell starts interactive with that rc')
   assert.ok(!command.includes('--noprofile'), 'the machine profile is no longer skipped')
 })
