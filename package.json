@@ -1,6 +1,6 @@
 {
   "name": "@jackguo0310/dsh-remote",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Lightweight remote development for DeepSeek Harness: pick a remote workspace over SSH and let the agent work on it with the SAME local tools — file, shell, and search providers are routed to the remote host by the plugin. Adds a remote-file browser tab inside dsh-better-sidebar (upload/download over SFTP) and on-demand loopback port forwarding.",
   "license": "MIT",
   "keywords": [

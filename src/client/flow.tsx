@@ -95,6 +95,13 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
   // The innermost scrollable element is scrolled by hand rather than letting the
   // browser pick: the body and the list are both scrollers, and which one
   // overflows depends on the window height.
+  //
+  // A hand-driven scroll loses the engine's own wheel animation, so the gesture
+  // is replayed here the way a list should take it: at most two folder rows per
+  // wheel event, moved there over a few frames. Assigning scrollTop directly
+  // teleported the list by the engine's whole 100px notch, which on a 35px row
+  // means three names flash past unseen and a high-resolution wheel skips
+  // further still.
   useEffect(() => {
     const dialog = dialogRef.current
     if (dialog === null) return
@@ -107,15 +114,72 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
       }
       return null
     }
+    // Rows are 35px tall (8px padding, 18px line, 1px gap); the fallback only
+    // matters for an empty list, where the step is never used.
+    let measuredOn: HTMLElement | null = null
+    let rowPx = 35
+    const rowHeight = (el: HTMLElement): number => {
+      if (el !== measuredOn) {
+        measuredOn = el
+        const row = el.querySelector<HTMLElement>('.rdv-itemRow')
+        rowPx = row !== null && row.offsetHeight > 0 ? row.offsetHeight + 1 : 35
+      }
+      return rowPx
+    }
+    const reducedMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let scroller: HTMLElement | null = null
+    let pending = 0
+    let from = 0
+    let startedAt = 0
+    let duration = 0
+    let frame = 0
+    const animate = (now: number): void => {
+      frame = 0
+      const el = scroller
+      if (el === null) return
+      const t = duration <= 0 ? 1 : Math.min(1, (now - startedAt) / duration)
+      // Ease-out: fast first, so a spin keeps up, and a soft landing on the row.
+      el.scrollTop = from + (pending - from) * (1 - (1 - t) ** 3)
+      if (t < 1) frame = requestAnimationFrame(animate)
+      else el.scrollTop = pending
+    }
+    const stepBy = (el: HTMLElement, delta: number): void => {
+      const max = Math.max(0, el.scrollHeight - el.clientHeight)
+      // An interrupted gesture resumes from wherever the last frame stopped, and
+      // keeps the not-yet-reached target so a fast spin is not swallowed.
+      if (el !== scroller || frame === 0) {
+        scroller = el
+        pending = el.scrollTop
+      }
+      pending = Math.min(max, Math.max(0, pending + delta))
+      from = el.scrollTop
+      const distance = Math.abs(pending - from)
+      if (frame !== 0) cancelAnimationFrame(frame)
+      if (distance < 1) {
+        frame = 0
+        return
+      }
+      startedAt = performance.now()
+      duration = reducedMotion ? 0 : Math.min(200, Math.max(80, distance * 1.1))
+      frame = requestAnimationFrame(animate)
+    }
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
-      const scroller = scrollerFor(event.target as Node)
-      if (scroller === null) return
-      // deltaMode 1 counts lines rather than pixels (Firefox, some Linux engines).
-      scroller.scrollTop += event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY
+      const el = scrollerFor(event.target as Node)
+      if (el === null) return
+      // deltaMode 1 counts lines, 2 counts pages (Firefox, some Linux engines).
+      const raw = event.deltaMode === 1 ? event.deltaY * rowHeight(el)
+        : event.deltaMode === 2 ? event.deltaY * el.clientHeight
+          : event.deltaY
+      const limit = rowHeight(el) * 2
+      stepBy(el, Math.max(-limit, Math.min(limit, raw)))
     }
     dialog.addEventListener('wheel', onWheel, { capture: true, passive: false })
-    return () => dialog.removeEventListener('wheel', onWheel, { capture: true })
+    return () => {
+      dialog.removeEventListener('wheel', onWheel, { capture: true })
+      if (frame !== 0) cancelAnimationFrame(frame)
+    }
   }, [open])
 
   const loadMachines = useCallback((): void => {
